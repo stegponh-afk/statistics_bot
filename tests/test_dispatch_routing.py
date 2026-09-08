@@ -134,3 +134,42 @@ async def test_channel_post_is_recorded_and_discovers_the_chat(session, cache, b
     chat = await session.scalar(select(Chat).where(Chat.telegram_id == CHANNEL))
     assert chat.bot_status == BotStatus.ADMINISTRATOR
     assert (await session.scalar(select(ChatAdmin).where(ChatAdmin.chat_id == chat.id))) is not None
+
+
+async def test_reward_deep_link_flow(session, cache, bot: FakeBot):
+    from aiogram.types import Chat as TgChat
+    from aiogram.types import ChatMemberLeft, ChatMemberMember
+
+    from app.services import chat_service, reward_service
+    from app.services.broadcast_service import Content
+
+    channel = await chat_service.upsert_chat(
+        session, TgChat(id=-100_40, type="channel", title="R", username="rchan")
+    )
+    await reward_service.set_reward(session, channel, Content(type="text", text="секрет"))
+    slug = channel.reward_slug
+    dp = _dispatcher(session, cache)
+
+    def start_update(uid: int):
+        msg = make_message(
+            chat_id=5, chat_type="private", user_id=5, text=f"/start sub_{slug}", bot=bot
+        )
+        payload = msg.model_dump(exclude_none=True)
+        payload["entities"] = [{"type": "bot_command", "offset": 0, "length": 6}]
+        return Update.model_validate({"update_id": uid, "message": payload}, context={"bot": bot})
+
+    # not subscribed -> prompt with the channel link and «Проверить»
+    bot.members[(-100_40, 5)] = ChatMemberLeft(user=tg_user(5))
+    await dp.feed_update(bot, start_update(10))
+    sent = bot.calls_named("send_rich_message")
+    buttons = [
+        b for blk in sent[-1]["rich_message"].blocks if blk.type == "buttons" for b in blk.buttons
+    ]
+    assert buttons[0].url == "https://t.me/rchan"
+    assert buttons[-1].callback_data == f"sub:check:{slug}"
+    assert not bot.calls_named("send_message")
+
+    # subscribed -> the reward itself
+    bot.members[(-100_40, 5)] = ChatMemberMember(user=tg_user(5))
+    await dp.feed_update(bot, start_update(11))
+    assert bot.calls_named("send_message")[-1]["text"] == "секрет"

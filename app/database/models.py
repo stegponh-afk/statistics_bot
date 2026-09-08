@@ -80,6 +80,10 @@ class Chat(Base):
     invite_link: Mapped[str | None] = mapped_column(Text)
     # For channels: the discussion group (comments), from getChat.
     linked_chat_tg_id: Mapped[int | None] = mapped_column(BigInteger)
+    # «Награда за подписку» (channels): deep-link slug + the message
+    # (broadcast_service.Content JSON) handed to verified subscribers.
+    reward_slug: Mapped[str | None] = mapped_column(String(16), unique=True, index=True)
+    reward_content: Mapped[dict | None] = mapped_column(JSON)
 
     bot_status: Mapped[BotStatus] = mapped_column(
         Enum(BotStatus, name="bot_status", values_callable=_enum_values), default=BotStatus.MEMBER

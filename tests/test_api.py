@@ -132,3 +132,14 @@ async def test_check_records_audience_and_users_endpoint(client, key, bot: FakeB
     assert resp.status == 400
     resp = await client.post("/v1/users", data="not json", headers=headers)
     assert resp.status == 400
+
+
+async def test_key_in_path_works_without_header(client, key, bot: FakeBot):
+    _, raw = key
+    bot.members[(CHANNEL, USER)] = ChatMemberMember(user=tg_user(USER))
+    resp = await client.get(f"/v1/check/{raw}?user_id={USER}")
+    assert resp.status == 200 and (await resp.json())["subscribed"] is True
+    resp = await client.get(f"/v1/channels/{raw}")
+    assert resp.status == 200
+    resp = await client.get(f"/v1/check/sb_wrong?user_id={USER}")
+    assert resp.status == 401

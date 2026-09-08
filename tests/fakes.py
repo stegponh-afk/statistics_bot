@@ -59,6 +59,9 @@ class FakeBot:
         extra.setdefault("message_id", self._message_id)
         return make_message(chat_id=chat_id, bot=self, from_bot=True, **extra)
 
+    async def me(self) -> User:
+        return tg_user(self.id, "Bot", is_bot=True)
+
     # --- chat info -----------------------------------------------------
 
     async def get_chat_member(self, chat_id: int, user_id: int) -> ChatMember:

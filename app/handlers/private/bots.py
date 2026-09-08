@@ -129,8 +129,17 @@ async def key_channels_screen(session: AsyncSession, user: User, key: ApiKey) ->
     return Screen(ru.KEY_CHANNELS_TITLE.format(name=key.name), rows=rows)
 
 
+def _api_base() -> str:
+    return settings.api_public_url.rstrip("/") or f"http://<host>:{settings.api_port}"
+
+
+def check_url(raw_key: str) -> str:
+    """The one-line integration for bot constructors: key in the path."""
+    return f"{_api_base()}/v1/check/{raw_key}?user_id={{user_id}}"
+
+
 def howto_screen() -> Screen:
-    base = settings.api_public_url.rstrip("/") or f"http://<host>:{settings.api_port}"
+    base = _api_base()
     text = ru.KEY_HOWTO.format(base=base, limit=settings.api_rate_limit_per_minute)
     text += ru.KEY_HOWTO_USERS.format(base=base)
     return Screen(text, rows=[[Btn(ru.BTN_BACK, "keys:list")]])
@@ -199,7 +208,7 @@ async def on_bot_name(
     await state.clear()
     key, raw = await api_key_service.create_key(session, user, name or "Бот")
     screen = Screen(
-        ru.BOT_CREATED.format(name=key.name, raw=raw),
+        ru.BOT_CREATED.format(name=key.name, raw=raw, check_url=check_url(raw)),
         rows=[
             [Btn(ru.BTN_KEY_CHANNELS.format(count=0), f"key:{key.id}:channels")],
             [Btn(ru.BTN_BOT_TOKEN_ADD, f"key:{key.id}:token")],
@@ -348,7 +357,10 @@ async def cb_key_rotate(
     if key is None:
         return
     key, raw = await api_key_service.rotate_key(session, cache, key)
-    screen = Screen(ru.KEY_ROTATED.format(raw=raw), rows=[[Btn(ru.BTN_BACK, f"key:{key.id}")]])
+    screen = Screen(
+        ru.KEY_ROTATED.format(raw=raw, check_url=check_url(raw)),
+        rows=[[Btn(ru.BTN_BACK, f"key:{key.id}")]],
+    )
     await respond(callback, screen, rich_buttons=_rich(user))
 
 

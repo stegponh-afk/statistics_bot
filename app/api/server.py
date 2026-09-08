@@ -3,6 +3,11 @@
     GET /healthz
     GET /v1/check?user_id=<int>     Authorization: Bearer sb_...
     GET /v1/channels                Authorization: Bearer sb_...
+    POST /v1/users                  Authorization: Bearer sb_...
+
+    The key may also travel in the path — for bot constructors whose
+    "HTTP request" action can't set headers:
+    GET /v1/check/<key>?user_id=<int>,  GET /v1/channels/<key>
 
 Errors are always JSON: {"ok": false, "error": "<code>", "detail": "..."}.
 """
@@ -65,6 +70,8 @@ async def bearer_auth(request: web.Request, handler: Handler) -> web.StreamRespo
 
     header = request.headers.get("Authorization", "")
     scheme, _, raw = header.partition(" ")
+    if key_in_path := request.match_info.get("key"):
+        scheme, raw = "bearer", key_in_path
     if scheme.lower() != "bearer" or not raw.strip():
         decision = await rate_limit.check(
             cache, f"ip:{client_ip(request)}", settings.api_unauth_rate_limit_per_minute
@@ -203,6 +210,8 @@ def create_api_app(bot: Bot, session_factory: async_sessionmaker, cache: Cache) 
     app[CACHE_KEY] = cache
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/v1/check", v1_check)
+    app.router.add_get("/v1/check/{key}", v1_check)
     app.router.add_get("/v1/channels", v1_channels)
+    app.router.add_get("/v1/channels/{key}", v1_channels)
     app.router.add_post("/v1/users", v1_users)
     return app

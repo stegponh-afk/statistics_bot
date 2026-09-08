@@ -19,8 +19,10 @@ from app.handlers.private import (
     channels_binding,
     chat_panel,
     my_chats,
+    reward,
     settings,
     start,
+    subscribe,
     whitelist,
 )
 from app.handlers.private import help as private_help
@@ -34,11 +36,13 @@ def build_router(cache: Cache) -> Router:
     private_router = Router(name="private")
     private_router.message.filter(PRIVATE)
     private_router.callback_query.filter(CB_PRIVATE)
+    private_router.include_router(subscribe.router)
     private_router.include_router(start.router)
     private_router.include_router(my_chats.router)
     private_router.include_router(chat_panel.router)
     private_router.include_router(channels_binding.router)
     private_router.include_router(channel_check.router)
+    private_router.include_router(reward.router)
     private_router.include_router(whitelist.router)
     private_router.include_router(bots.router)
     private_router.include_router(broadcast.router)
