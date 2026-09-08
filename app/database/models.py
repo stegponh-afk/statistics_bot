@@ -231,36 +231,6 @@ class ApiKey(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # The owner's own bot, for broadcasts sent on its behalf. The token is
-    # stored as given (the owner is told so); NULL = broadcasts disabled.
-    bot_token: Mapped[str | None] = mapped_column(Text)
-    bot_username: Mapped[str | None] = mapped_column(String(64))
-    bot_user_id: Mapped[int | None] = mapped_column(BigInteger)
-
-    @property
-    def has_bot(self) -> bool:
-        return bool(self.bot_token)
-
-
-class BotAudience(Base):
-    """Users of the owner's bot we may broadcast to: everyone the bot has
-    checked through /v1/check or registered through POST /v1/users."""
-
-    __tablename__ = "bot_audience"
-
-    api_key_id: Mapped[int] = mapped_column(
-        ForeignKey("api_keys.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    # Set when the user blocked the owner's bot (403 on send).
-    is_blocked: Mapped[bool] = mapped_column(default=False)
-
 
 class BroadcastKind(str, enum.Enum):
     NOW = "now"
@@ -310,7 +280,6 @@ class Broadcast(Base):
 
 class BroadcastTargetKind(str, enum.Enum):
     CHAT = "chat"  # target_id = chats.id
-    BOT = "bot"  # target_id = api_keys.id (the owner's bot -> its audience)
 
 
 class BroadcastTarget(Base):

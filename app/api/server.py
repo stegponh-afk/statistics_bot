@@ -3,7 +3,6 @@
     GET /healthz
     GET /v1/check?user_id=<int>     Authorization: Bearer sb_...
     GET /v1/channels                Authorization: Bearer sb_...
-    POST /v1/users                  Authorization: Bearer sb_...
 
     The key may also travel in the path — for bot constructors whose
     "HTTP request" action can't set headers:
@@ -22,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.cache import Cache
 from app.database.models import ApiKey, Chat
-from app.services import api_key_service, audience_service, chat_service, rate_limit
+from app.services import api_key_service, chat_service, rate_limit
 from app.services.subscription_checker import check_user
 from config import settings
 
@@ -150,9 +149,6 @@ async def v1_check(request: web.Request) -> web.Response:
 
     channels = await api_key_service.list_key_channels(session, key)
     force = request.query.get("force") in ("1", "true")
-    # Every checked user is someone the owner's bot talks to: remember them
-    # as its broadcast audience.
-    await audience_service.record_users(session, key, [user_id])
     result = await check_user(bot, cache, user_id, channels, force=force)
     if channels and len(result.unavailable) == len(channels):
         return error(503, "telegram_unavailable", "None of the channels could be checked")
@@ -182,27 +178,6 @@ async def v1_channels(request: web.Request) -> web.Response:
     )
 
 
-async def v1_users(request: web.Request) -> web.Response:
-    """POST {"user_ids": [...]} — registers users of the owner's bot as its
-    broadcast audience (up to 10 000 per call)."""
-    try:
-        body = await request.json()
-    except ValueError:
-        return error(400, "bad_request", "Body must be JSON")
-    ids = body.get("user_ids") if isinstance(body, dict) else None
-    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
-        return error(400, "bad_request", "user_ids must be a list of integers")
-    if len(ids) > audience_service.MAX_BATCH:
-        return error(400, "bad_request", f"at most {audience_service.MAX_BATCH} ids per call")
-    key: ApiKey = request["api_key"]
-    session: AsyncSession = request["session"]
-    added = await audience_service.record_users(session, key, ids)
-    reachable, blocked = await audience_service.audience_size(session, key)
-    return web.json_response(
-        {"ok": True, "received": added, "audience": reachable, "blocked": blocked}
-    )
-
-
 def create_api_app(bot: Bot, session_factory: async_sessionmaker, cache: Cache) -> web.Application:
     app = web.Application(middlewares=[json_errors, bearer_auth])
     app[BOT_KEY] = bot
@@ -213,5 +188,4 @@ def create_api_app(bot: Bot, session_factory: async_sessionmaker, cache: Cache) 
     app.router.add_get("/v1/check/{key}", v1_check)
     app.router.add_get("/v1/channels", v1_channels)
     app.router.add_get("/v1/channels/{key}", v1_channels)
-    app.router.add_post("/v1/users", v1_users)
     return app

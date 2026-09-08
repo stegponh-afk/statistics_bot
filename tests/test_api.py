@@ -118,22 +118,6 @@ async def test_unauthenticated_requests_are_rate_limited_per_ip(client, monkeypa
     assert (await client.get("/v1/check?user_id=1")).status == 429
 
 
-async def test_check_records_audience_and_users_endpoint(client, key, bot: FakeBot, session):
-    api_key, raw = key
-    headers = {"Authorization": f"Bearer {raw}"}
-    bot.members[(CHANNEL, USER)] = ChatMemberMember(user=tg_user(USER))
-    await client.get(f"/v1/check?user_id={USER}", headers=headers)
-
-    resp = await client.post("/v1/users", json={"user_ids": [USER, 7, 8]}, headers=headers)
-    body = await resp.json()
-    assert resp.status == 200 and body["received"] == 3 and body["audience"] == 3
-
-    resp = await client.post("/v1/users", json={"user_ids": "x"}, headers=headers)
-    assert resp.status == 400
-    resp = await client.post("/v1/users", data="not json", headers=headers)
-    assert resp.status == 400
-
-
 async def test_key_in_path_works_without_header(client, key, bot: FakeBot):
     _, raw = key
     bot.members[(CHANNEL, USER)] = ChatMemberMember(user=tg_user(USER))

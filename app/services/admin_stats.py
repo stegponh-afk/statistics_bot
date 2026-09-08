@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
     ApiKey,
-    BotAudience,
     BotStatus,
     Broadcast,
     BroadcastStatus,
@@ -39,9 +38,6 @@ class Overview:
     group_members: int
     channel_members: int
     bots: int
-    bots_with_token: int
-    audience_total: int  # sum over bots (a user in two bots counts twice)
-    audience_distinct: int
     api_requests: int
     broadcasts_scheduled: int
     message_events: int
@@ -90,28 +86,12 @@ async def overview(session: AsyncSession) -> Overview:
 
     bots_row = (
         await session.execute(
-            select(
-                func.count(),
-                func.coalesce(func.sum(case((ApiKey.bot_token.is_not(None), 1), else_=0)), 0),
-                func.coalesce(func.sum(ApiKey.request_count), 0),
-            ).where(ApiKey.is_active.is_(True))
+            select(func.count(), func.coalesce(func.sum(ApiKey.request_count), 0)).where(
+                ApiKey.is_active.is_(True)
+            )
         )
     ).one()
 
-    audience_total = await _count(
-        session,
-        select(func.count())
-        .select_from(BotAudience)
-        .join(ApiKey, ApiKey.id == BotAudience.api_key_id)
-        .where(BotAudience.is_blocked.is_(False), ApiKey.is_active.is_(True)),
-    )
-    audience_distinct = await _count(
-        session,
-        select(func.count(func.distinct(BotAudience.user_tg_id)))
-        .select_from(BotAudience)
-        .join(ApiKey, ApiKey.id == BotAudience.api_key_id)
-        .where(BotAudience.is_blocked.is_(False), ApiKey.is_active.is_(True)),
-    )
     broadcasts_scheduled = await _count(
         session,
         select(func.count())
@@ -130,10 +110,7 @@ async def overview(session: AsyncSession) -> Overview:
         group_members=int(chats_row[2]),
         channel_members=int(chats_row[3]),
         bots=int(bots_row[0]),
-        bots_with_token=int(bots_row[1]),
-        audience_total=audience_total,
-        audience_distinct=audience_distinct,
-        api_requests=int(bots_row[2]),
+        api_requests=int(bots_row[1]),
         broadcasts_scheduled=broadcasts_scheduled,
         message_events=events,
     )
@@ -174,12 +151,11 @@ async def list_chats(session: AsyncSession, *, channels: bool) -> list[ChatRow]:
 class BotRow:
     key: ApiKey
     owner: User | None
-    audience: int
     channels: int
 
 
 async def list_bots(session: AsyncSession) -> list[BotRow]:
-    from app.services import api_key_service, audience_service
+    from app.services import api_key_service
 
     keys = list(
         await session.scalars(
@@ -189,7 +165,6 @@ async def list_bots(session: AsyncSession) -> list[BotRow]:
     rows: list[BotRow] = []
     for key in keys:
         owner = await session.get(User, key.owner_user_id)
-        reachable, _ = await audience_service.audience_size(session, key)
         channels = await api_key_service.list_key_channels(session, key)
-        rows.append(BotRow(key=key, owner=owner, audience=reachable, channels=len(channels)))
+        rows.append(BotRow(key=key, owner=owner, channels=len(channels)))
     return rows

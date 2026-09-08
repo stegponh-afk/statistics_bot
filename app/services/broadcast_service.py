@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
-    ApiKey,
     Broadcast,
     BroadcastKind,
     BroadcastStatus,
@@ -200,7 +199,6 @@ async def create_broadcast(
     kind: BroadcastKind,
     content: Content,
     chat_ids: list[int],
-    bot_key_ids: list[int],
     tz_name: str,
     scheduled_at: datetime | None = None,
     recur_days: list[int] | None = None,
@@ -227,18 +225,10 @@ async def create_broadcast(
     session.add(broadcast)
     await session.flush()
     session.add_all(
-        [
-            BroadcastTarget(
-                broadcast_id=broadcast.id, kind=BroadcastTargetKind.CHAT.value, target_id=cid
-            )
-            for cid in chat_ids
-        ]
-        + [
-            BroadcastTarget(
-                broadcast_id=broadcast.id, kind=BroadcastTargetKind.BOT.value, target_id=kid
-            )
-            for kid in bot_key_ids
-        ]
+        BroadcastTarget(
+            broadcast_id=broadcast.id, kind=BroadcastTargetKind.CHAT.value, target_id=cid
+        )
+        for cid in chat_ids
     )
     await session.commit()
     await session.refresh(broadcast)
@@ -266,21 +256,16 @@ async def get_owned_broadcast(
     return broadcast
 
 
-async def targets(session: AsyncSession, broadcast: Broadcast) -> tuple[list[Chat], list[ApiKey]]:
+async def targets(session: AsyncSession, broadcast: Broadcast) -> list[Chat]:
     rows = list(
         await session.scalars(
             select(BroadcastTarget).where(BroadcastTarget.broadcast_id == broadcast.id)
         )
     )
     chat_ids = [r.target_id for r in rows if r.kind == BroadcastTargetKind.CHAT.value]
-    key_ids = [r.target_id for r in rows if r.kind == BroadcastTargetKind.BOT.value]
-    chats = (
-        list(await session.scalars(select(Chat).where(Chat.id.in_(chat_ids)))) if chat_ids else []
-    )
-    keys = (
-        list(await session.scalars(select(ApiKey).where(ApiKey.id.in_(key_ids)))) if key_ids else []
-    )
-    return chats, keys
+    if not chat_ids:
+        return []
+    return list(await session.scalars(select(Chat).where(Chat.id.in_(chat_ids))))
 
 
 async def set_status(session: AsyncSession, broadcast: Broadcast, status: BroadcastStatus) -> None:

@@ -71,8 +71,8 @@ async def revoke_key(session: AsyncSession, cache: Cache, key: ApiKey) -> None:
 
 
 async def rotate_key(session: AsyncSession, cache: Cache, key: ApiKey) -> tuple[ApiKey, str]:
-    """Replaces the secret of `key` in place — channels, bot token and
-    audience stay attached; the old secret stops working at once."""
+    """Replaces the secret of `key` in place — channels stay attached;
+    the old secret stops working at once."""
     await cache.delete(key_cache_key(key.key_hash))
     raw, digest, prefix = generate_key()
     key.key_hash = digest
@@ -81,27 +81,6 @@ async def rotate_key(session: AsyncSession, cache: Cache, key: ApiKey) -> tuple[
     key.created_at = datetime.now(UTC)
     await session.commit()
     return key, raw
-
-
-async def set_bot_token(
-    session: AsyncSession, key: ApiKey, token: str, bot_user_id: int, username: str | None
-) -> None:
-    key.bot_token = token
-    key.bot_user_id = bot_user_id
-    key.bot_username = username
-    await session.commit()
-
-
-async def clear_bot_token(session: AsyncSession, key: ApiKey) -> None:
-    key.bot_token = None
-    key.bot_user_id = None
-    key.bot_username = None
-    await session.commit()
-
-
-async def list_bot_keys(session: AsyncSession, owner: User) -> list[ApiKey]:
-    """Active keys with a bot token — broadcast targets of kind "bot"."""
-    return [k for k in await list_keys(session, owner) if k.has_bot]
 
 
 async def delete_key(session: AsyncSession, cache: Cache, key: ApiKey) -> None:

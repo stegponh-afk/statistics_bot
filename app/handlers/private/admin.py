@@ -53,9 +53,6 @@ async def overview_screen(session: AsyncSession) -> Screen:
         groups=o.groups,
         group_members=o.group_members,
         bots=o.bots,
-        bots_with_token=o.bots_with_token,
-        audience_total=o.audience_total,
-        audience_distinct=o.audience_distinct,
         api_requests=o.api_requests,
         broadcasts=o.broadcasts_scheduled,
         events=o.message_events,
@@ -99,8 +96,6 @@ async def bots_screen(session: AsyncSession) -> Screen:
         lines.append(
             ru.ADMIN_BOT_ROW.format(
                 name=r.key.name,
-                bot=f" @{r.key.bot_username}" if r.key.bot_username else "",
-                audience=r.audience,
                 channels=r.channels,
                 requests=r.key.request_count,
                 owner=_owner_label(r.owner),

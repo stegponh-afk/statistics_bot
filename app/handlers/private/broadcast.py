@@ -1,4 +1,4 @@
-"""«Рассылка»: compose a message, pick chats/bots, send now / at a time /
+"""«Рассылка»: compose a message, pick chats, send now / at a time /
 on a weekly schedule; list and manage existing broadcasts.
 
   bc:menu                  the section
@@ -19,8 +19,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Broadcast, BroadcastKind, BroadcastStatus, User
-from app.services import api_key_service, audience_service, broadcast_delivery, broadcast_service
+from app.database.models import Broadcast, BroadcastKind, BroadcastStatus, Chat, User
+from app.services import broadcast_delivery, broadcast_service
 from app.services.broadcast_service import (
     WEEKDAY_LABELS,
     Content,
@@ -72,16 +72,12 @@ def menu_screen() -> Screen:
     )
 
 
-async def _available_targets(session: AsyncSession, user: User):
-    chats = [c for c in await list_admin_chats(session, user) if c.is_active]
-    bots = await api_key_service.list_bot_keys(session, user)
-    return chats, bots
+async def _available_targets(session: AsyncSession, user: User) -> list[Chat]:
+    return [c for c in await list_admin_chats(session, user) if c.is_active]
 
 
-async def targets_screen(
-    session: AsyncSession, user: User, chosen_chats: set[int], chosen_bots: set[int]
-) -> Screen:
-    chats, bots = await _available_targets(session, user)
+async def targets_screen(session: AsyncSession, user: User, chosen_chats: set[int]) -> Screen:
+    chats = await _available_targets(session, user)
     rows: list[list[Btn]] = []
     for chat in chats:
         icon = "📣" if chat.is_channel else "👥"
@@ -90,17 +86,9 @@ async def targets_screen(
             ru.BROADCAST_TARGET_ON if chat.id in chosen_chats else ru.BROADCAST_TARGET_OFF
         ).format(title=title)
         rows.append([Btn(label, f"bc:t:c:{chat.id}")])
-    for key in bots:
-        reachable, _ = await audience_service.audience_size(session, key)
-        title = ru.BROADCAST_TARGET_BOT.format(name=key.name, audience=reachable)
-        label = (
-            ru.BROADCAST_TARGET_ON if key.id in chosen_bots else ru.BROADCAST_TARGET_OFF
-        ).format(title=title)
-        rows.append([Btn(label, f"bc:t:b:{key.id}")])
     rows.append([Btn(ru.BTN_NEXT, "bc:t:next", STYLE_PRIMARY)])
     rows.append([Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)])
-    count = len(chosen_chats) + len(chosen_bots)
-    return Screen(ru.BROADCAST_PICK_TARGETS.format(count=count), rows=rows)
+    return Screen(ru.BROADCAST_PICK_TARGETS.format(count=len(chosen_chats)), rows=rows)
 
 
 def days_screen(chosen: set[int]) -> Screen:
@@ -144,8 +132,8 @@ async def list_screen(session: AsyncSession, user: User) -> Screen:
 
 
 async def card_screen(session: AsyncSession, b: Broadcast) -> Screen:
-    chats, keys = await broadcast_service.targets(session, b)
-    target_names = [c.title or str(c.telegram_id) for c in chats] + [f"🤖 {k.name}" for k in keys]
+    chats = await broadcast_service.targets(session, b)
+    target_names = [c.title or str(c.telegram_id) for c in chats]
     if b.kind == BroadcastKind.ONCE.value:
         schedule_line = ru.BROADCAST_SCHEDULE_ONCE.format(
             when=format_local(b.scheduled_at, b.timezone), tz=b.timezone
@@ -210,8 +198,7 @@ async def cb_new(
     if user is None:
         await callback.answer()
         return
-    chats, bots = await _available_targets(session, user)
-    if not chats and not bots:
+    if not await _available_targets(session, user):
         await respond(
             callback,
             Screen(ru.BROADCAST_NO_TARGETS, rows=[[Btn(ru.BTN_BACK, "bc:menu")]]),
@@ -219,38 +206,32 @@ async def cb_new(
         )
         return
     await state.set_state(BroadcastNew.targets)
-    await state.set_data({"chats": [], "bots": []})
-    await respond(
-        callback, await targets_screen(session, user, set(), set()), rich_buttons=_rich(user)
-    )
+    await state.set_data({"chats": []})
+    await respond(callback, await targets_screen(session, user, set()), rich_buttons=_rich(user))
 
 
-@router.callback_query(BroadcastNew.targets, F.data.regexp(r"^bc:t:(c|b):(\d+)$"))
+@router.callback_query(BroadcastNew.targets, F.data.regexp(r"^bc:t:c:(\d+)$"))
 async def cb_toggle_target(
     callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
 ) -> None:
     if user is None:
         await callback.answer()
         return
-    _, _, kind, raw_id = callback.data.split(":")
-    target_id = int(raw_id)
+    target_id = int(callback.data.rsplit(":", 1)[1])
     data = await state.get_data()
-    bucket = "chats" if kind == "c" else "bots"
-    chosen = set(data.get(bucket, []))
+    chosen = set(data.get("chats", []))
     chosen.symmetric_difference_update({target_id})
-    data[bucket] = sorted(chosen)
+    data["chats"] = sorted(chosen)
     await state.set_data(data)
     await respond(
-        callback,
-        await targets_screen(session, user, set(data["chats"]), set(data["bots"])),
-        rich_buttons=_rich(user),
+        callback, await targets_screen(session, user, set(data["chats"])), rich_buttons=_rich(user)
     )
 
 
 @router.callback_query(BroadcastNew.targets, F.data == "bc:t:next")
 async def cb_targets_next(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
     data = await state.get_data()
-    if not data.get("chats") and not data.get("bots"):
+    if not data.get("chats"):
         await callback.answer(ru.BROADCAST_NEED_TARGET, show_alert=True)
         return
     await state.set_state(BroadcastNew.message)
@@ -281,7 +262,7 @@ async def _show_preview(chat_id: int, bot, user: User, state: FSMContext) -> Non
     data = await state.get_data()
     content = Content.from_json(data["content"])
     await broadcast_delivery._send(bot, chat_id, content, content.file_id)
-    targets = len(data.get("chats", [])) + len(data.get("bots", []))
+    targets = len(data.get("chats", []))
     screen = Screen(
         ru.BROADCAST_PREVIEW_HINT.format(targets=targets),
         rows=[
@@ -334,20 +315,13 @@ async def _create(
         kind=kind,
         content=Content.from_json(data["content"]),
         chat_ids=data.get("chats", []),
-        bot_key_ids=data.get("bots", []),
         tz_name=_tz(),
         **when,
     )
 
 
 def _sent_screen(result: broadcast_delivery.RunResult) -> Screen:
-    text = ru.BROADCAST_SENT_NOW.format(
-        sent=result.sent,
-        failed=result.failed,
-        blocked_line=ru.BROADCAST_BLOCKED_LINE.format(blocked=result.blocked)
-        if result.blocked
-        else "",
-    )
+    text = ru.BROADCAST_SENT_NOW.format(sent=result.sent, failed=result.failed)
     return Screen(
         text, rows=[[Btn(ru.BTN_BROADCAST_LIST, "bc:list")], [Btn(ru.BTN_BACK, "bc:menu")]]
     )

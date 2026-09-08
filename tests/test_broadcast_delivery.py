@@ -3,10 +3,9 @@ from datetime import UTC, datetime, time, timedelta
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.methods import SendMessage
 from aiogram.types import Chat as TgChat
-from sqlalchemy import select
 
-from app.database.models import BotAudience, BotStatus, BroadcastKind, BroadcastStatus, User
-from app.services import api_key_service, audience_service, broadcast_delivery, broadcast_service
+from app.database.models import BotStatus, BroadcastKind, BroadcastStatus, User
+from app.services import broadcast_delivery, broadcast_service
 from app.services.broadcast_service import Content
 from app.utils import ensure_aware
 from tests.fakes import FakeBot
@@ -20,25 +19,25 @@ async def _owner(session) -> User:
     return user
 
 
-async def _chat(session, tg_id: int):
+async def _chat(session, tg_id: int, kind: str = "supergroup"):
     from app.services import chat_service
 
-    chat = await chat_service.upsert_chat(session, TgChat(id=tg_id, type="supergroup", title="G"))
+    chat = await chat_service.upsert_chat(session, TgChat(id=tg_id, type=kind, title="G"))
     chat.bot_status = BotStatus.ADMINISTRATOR
     await session.commit()
     return chat
 
 
-async def test_now_broadcast_to_chats_and_bot_audience(session, bot: FakeBot):
+async def test_now_broadcast_to_chats(session, bot: FakeBot):
     owner = await _owner(session)
-    chat = await _chat(session, -100_1)
-    key, _ = await api_key_service.create_key(session, owner, "mybot")
-    await api_key_service.set_bot_token(session, key, "111:token", 111, "mybot")
-    await audience_service.record_users(session, key, [10, 11, 12])
+    group = await _chat(session, -100_1)
+    channel = await _chat(session, -100_2, "channel")
+    gone = await _chat(session, -100_3)
+    gone.bot_status = BotStatus.KICKED
+    await session.commit()
 
-    their_bot = FakeBot(bot_id=111)
-    their_bot.fail_next["send_message"] = TelegramForbiddenError(
-        method=SendMessage(chat_id=10, text="x"), message="bot was blocked by the user"
+    bot.fail_next["send_message"] = TelegramForbiddenError(
+        method=SendMessage(chat_id=-100_1, text="x"), message="bot was kicked"
     )
     content = Content(type="text", text="hello", buttons=[[{"text": "A", "url": "https://a"}]])
     b = await broadcast_service.create_broadcast(
@@ -46,54 +45,28 @@ async def test_now_broadcast_to_chats_and_bot_audience(session, bot: FakeBot):
         owner,
         kind=BroadcastKind.NOW,
         content=content,
-        chat_ids=[chat.id],
-        bot_key_ids=[key.id],
+        chat_ids=[group.id, channel.id, gone.id],
         tz_name="UTC",
     )
-    result = await broadcast_delivery.run_broadcast(
-        session, bot, b, bot_factory=lambda token: their_bot
-    )
-    assert (result.sent, result.failed, result.blocked) == (3, 0, 1)
-    assert bot.calls_named("send_message")[0]["chat_id"] == -100_1
-    assert (
-        bot.calls_named("send_message")[0]["reply_markup"].inline_keyboard[0][0].url == "https://a"
-    )
-    assert len(their_bot.calls_named("send_message")) == 3
+    result = await broadcast_delivery.run_broadcast(session, bot, b)
+    assert (result.sent, result.failed) == (1, 2)  # one forbidden, one inactive
+    calls = bot.calls_named("send_message")
+    assert {c["chat_id"] for c in calls} == {-100_1, -100_2}
+    assert calls[0]["reply_markup"].inline_keyboard[0][0].url == "https://a"
     assert b.status == BroadcastStatus.DONE.value and b.runs_count == 1
-    assert b.sent_count == 3 and b.failed_count == 1
-    blocked = await session.scalar(
-        select(BotAudience).where(
-            BotAudience.api_key_id == key.id, BotAudience.is_blocked.is_(True)
-        )
-    )
-    assert blocked.user_tg_id == 10
-    reachable, blocked_n = await audience_service.audience_size(session, key)
-    assert (reachable, blocked_n) == (2, 1)
+    assert b.sent_count == 1 and b.failed_count == 2
 
 
-async def test_media_is_reuploaded_once_for_another_bot(session, bot: FakeBot):
+async def test_media_broadcast_uses_file_id(session, bot: FakeBot):
     owner = await _owner(session)
-    key, _ = await api_key_service.create_key(session, owner, "mybot")
-    await api_key_service.set_bot_token(session, key, "111:token", 111, "mybot")
-    await audience_service.record_users(session, key, [10, 11])
-    their_bot = FakeBot(bot_id=111)
+    chat = await _chat(session, -100_4, "channel")
     content = Content(type="photo", text="cap", file_id="our-file-id")
     b = await broadcast_service.create_broadcast(
-        session,
-        owner,
-        kind=BroadcastKind.NOW,
-        content=content,
-        chat_ids=[],
-        bot_key_ids=[key.id],
-        tz_name="UTC",
+        session, owner, kind=BroadcastKind.NOW, content=content, chat_ids=[chat.id], tz_name="UTC"
     )
-    await broadcast_delivery.run_broadcast(session, bot, b, bot_factory=lambda token: their_bot)
-    assert len(bot.calls_named("download")) == 1
-    sends = their_bot.calls_named("send_photo")
-    assert len(sends) == 2
-    assert not isinstance(sends[0]["media"], str)  # bytes on the first send
-    assert sends[1]["media"] == "photo-fid-111"  # reused file_id afterwards
-    assert sends[0]["caption"] == "cap"
+    await broadcast_delivery.run_broadcast(session, bot, b)
+    (call,) = bot.calls_named("send_photo")
+    assert call["media"] == "our-file-id" and call["caption"] == "cap"
 
 
 async def test_due_and_recurring_advance(session):
@@ -106,7 +79,6 @@ async def test_due_and_recurring_advance(session):
         kind=BroadcastKind.ONCE,
         content=content,
         chat_ids=[],
-        bot_key_ids=[],
         tz_name="UTC",
         scheduled_at=past,
     )
@@ -116,7 +88,6 @@ async def test_due_and_recurring_advance(session):
         kind=BroadcastKind.RECURRING,
         content=content,
         chat_ids=[],
-        bot_key_ids=[],
         tz_name="UTC",
         recur_days=list(range(7)),
         recur_time=time(0, 0),
@@ -140,16 +111,10 @@ async def test_due_and_recurring_advance(session):
 
 async def test_html_content_is_sent_with_parse_mode_and_entities_without(session, bot: FakeBot):
     owner = await _owner(session)
-    chat = await _chat(session, -100_2)
+    chat = await _chat(session, -100_5)
     html = Content(type="text", text="<b>x</b>", parse_mode="HTML")
     b = await broadcast_service.create_broadcast(
-        session,
-        owner,
-        kind=BroadcastKind.NOW,
-        content=html,
-        chat_ids=[chat.id],
-        bot_key_ids=[],
-        tz_name="UTC",
+        session, owner, kind=BroadcastKind.NOW, content=html, chat_ids=[chat.id], tz_name="UTC"
     )
     await broadcast_delivery.run_broadcast(session, bot, b)
     call = bot.calls_named("send_message")[-1]
@@ -157,13 +122,7 @@ async def test_html_content_is_sent_with_parse_mode_and_entities_without(session
 
     plain = Content(type="text", text="x", entities=[{"type": "bold", "offset": 0, "length": 1}])
     b = await broadcast_service.create_broadcast(
-        session,
-        owner,
-        kind=BroadcastKind.NOW,
-        content=plain,
-        chat_ids=[chat.id],
-        bot_key_ids=[],
-        tz_name="UTC",
+        session, owner, kind=BroadcastKind.NOW, content=plain, chat_ids=[chat.id], tz_name="UTC"
     )
     await broadcast_delivery.run_broadcast(session, bot, b)
     call = bot.calls_named("send_message")[-1]
