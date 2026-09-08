@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot
-from aiogram.types import Message, TelegramObject, Update
+from aiogram.types import ChatMemberUpdated, Message, TelegramObject, Update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache import Cache
@@ -58,6 +58,14 @@ class ChatContextMiddleware(BaseMiddleware):
                 f"seen:c:{tg_chat.id}", "1", SEEN_TTL
             ):
                 chat_row = await chat_service.upsert_chat(session, tg_chat)
+            if not isinstance(inner, ChatMemberUpdated) and chat_service.admins_stale(chat_row):
+                # A chat the bot learned about from a post/message rather
+                # than from its own my_chat_member update (e.g. it was added
+                # while offline): pull the bot's rights and the admin list
+                # so the chat shows up in «Мои чаты». Throttled by
+                # ADMIN_SYNC_TTL through admins_synced_at.
+                await chat_service.refresh_bot_membership(bot, session, chat_row)
+                await chat_service.sync_admins(bot, session, chat_row, self.cache)
             data["chat_row"] = chat_row
 
         data["is_ephemeral"] = bool(message is not None and message.ephemeral_message_id)
