@@ -70,7 +70,7 @@ def _fmt_dt(value) -> str:
     return value.strftime("%d.%m.%Y %H:%M") if value else ru.KEY_NEVER_USED
 
 
-async def bot_card_screen(session: AsyncSession, key: ApiKey) -> Screen:
+async def bot_card_screen(session: AsyncSession, key: ApiKey, user: User) -> Screen:
     channels = await api_key_service.list_key_channels(session, key)
     reachable, blocked = await audience_service.audience_size(session, key)
     text = ru.BOT_CARD.format(
@@ -86,6 +86,7 @@ async def bot_card_screen(session: AsyncSession, key: ApiKey) -> Screen:
         ),
         audience=reachable,
         blocked_line=ru.BOT_BLOCKED_LINE.format(blocked=blocked) if blocked else "",
+        check_url=check_url(key.key_raw, user.telegram_id) if key.key_raw else ru.KEY_RAW_MISSING,
     )
     text += f"\n\n<i>{ru.BOT_AUDIENCE_HINT}</i>"
     token_btn = (
@@ -133,14 +134,35 @@ def _api_base() -> str:
     return settings.api_public_url.rstrip("/") or f"http://<host>:{settings.api_port}"
 
 
-def check_url(raw_key: str) -> str:
-    """The one-line integration for bot constructors: key in the path."""
-    return f"{_api_base()}/v1/check/{raw_key}?user_id={{user_id}}"
+def check_url(raw_key: str | None, user_id: int | str) -> str:
+    """The one-line integration for bot constructors: key in the path,
+    the admin's own id pre-filled so the link can be tried right away."""
+    return f"{_api_base()}/v1/check/{raw_key or 'ВАШ_КЛЮЧ'}?user_id={user_id}"
 
 
-def howto_screen() -> Screen:
+def channels_url(raw_key: str | None) -> str:
+    return f"{_api_base()}/v1/channels/{raw_key or 'ВАШ_КЛЮЧ'}"
+
+
+def links_block(key: ApiKey, user: User) -> str:
+    """Ready links for one bot, each on its own line."""
+    if key.key_raw:
+        return ru.KEY_LINKS_BLOCK.format(
+            name=key.name,
+            check_url=check_url(key.key_raw, user.telegram_id),
+            channels_url=channels_url(key.key_raw),
+            user_id=user.telegram_id,
+        )
+    return ru.KEY_LINKS_BLOCK_NO_RAW.format(name=key.name)
+
+
+async def howto_screen(session: AsyncSession, user: User) -> Screen:
     base = _api_base()
-    text = ru.KEY_HOWTO.format(base=base, limit=settings.api_rate_limit_per_minute)
+    keys = await api_key_service.list_keys(session, user)
+    blocks = "\n\n".join(links_block(k, user) for k in keys) or ru.KEY_LINKS_NONE
+    text = ru.KEY_HOWTO.format(
+        base=base, limit=settings.api_rate_limit_per_minute, links=blocks, user_id=user.telegram_id
+    )
     text += ru.KEY_HOWTO_USERS.format(base=base)
     return Screen(text, rows=[[Btn(ru.BTN_BACK, "keys:list")]])
 
@@ -181,8 +203,11 @@ async def cb_bots_list(
 
 
 @router.callback_query(F.data == "keys:howto")
-async def cb_keys_howto(callback: CallbackQuery, user: User | None) -> None:
-    await respond(callback, howto_screen(), rich_buttons=_rich(user))
+async def cb_keys_howto(callback: CallbackQuery, session: AsyncSession, user: User | None) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    await respond(callback, await howto_screen(session, user), rich_buttons=_rich(user))
 
 
 @router.callback_query(F.data == "keys:new")
@@ -208,7 +233,7 @@ async def on_bot_name(
     await state.clear()
     key, raw = await api_key_service.create_key(session, user, name or "Бот")
     screen = Screen(
-        ru.BOT_CREATED.format(name=key.name, raw=raw, check_url=check_url(raw)),
+        ru.BOT_CREATED.format(name=key.name, raw=raw, check_url=check_url(raw, user.telegram_id)),
         rows=[
             [Btn(ru.BTN_KEY_CHANNELS.format(count=0), f"key:{key.id}:channels")],
             [Btn(ru.BTN_BOT_TOKEN_ADD, f"key:{key.id}:token")],
@@ -230,7 +255,7 @@ async def cb_bot_card(
     key = await _owned_key(callback, session, user)
     if key is None:
         return
-    await respond(callback, await bot_card_screen(session, key), rich_buttons=_rich(user))
+    await respond(callback, await bot_card_screen(session, key, user), rich_buttons=_rich(user))
 
 
 @router.callback_query(F.data.regexp(r"^key:(\d+):channels$"))
@@ -327,7 +352,10 @@ async def on_bot_token(
     await api_key_service.set_bot_token(session, key, token, me.id, me.username)
     await message.answer(ru.BOT_TOKEN_SAVED.format(username=me.username or me.id))
     await send(
-        message.bot, message.chat.id, await bot_card_screen(session, key), rich_buttons=_rich(user)
+        message.bot,
+        message.chat.id,
+        await bot_card_screen(session, key, user),
+        rich_buttons=_rich(user),
     )
 
 
@@ -343,7 +371,7 @@ async def cb_bot_token_remove(
         return
     await api_key_service.clear_bot_token(session, key)
     await callback.answer(ru.BOT_TOKEN_REMOVED)
-    await respond(callback, await bot_card_screen(session, key), rich_buttons=_rich(user))
+    await respond(callback, await bot_card_screen(session, key, user), rich_buttons=_rich(user))
 
 
 @router.callback_query(F.data.regexp(r"^key:(\d+):rotate$"))
@@ -358,7 +386,7 @@ async def cb_key_rotate(
         return
     key, raw = await api_key_service.rotate_key(session, cache, key)
     screen = Screen(
-        ru.KEY_ROTATED.format(raw=raw, check_url=check_url(raw)),
+        ru.KEY_ROTATED.format(raw=raw, check_url=check_url(raw, user.telegram_id)),
         rows=[[Btn(ru.BTN_BACK, f"key:{key.id}")]],
     )
     await respond(callback, screen, rich_buttons=_rich(user))

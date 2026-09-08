@@ -30,7 +30,9 @@ def key_cache_key(key_hash: str) -> str:
 
 async def create_key(session: AsyncSession, owner: User, name: str) -> tuple[ApiKey, str]:
     raw, digest, prefix = generate_key()
-    key = ApiKey(owner_user_id=owner.id, name=name[:64], key_hash=digest, key_prefix=prefix)
+    key = ApiKey(
+        owner_user_id=owner.id, name=name[:64], key_hash=digest, key_prefix=prefix, key_raw=raw
+    )
     session.add(key)
     await session.commit()
     await session.refresh(key)
@@ -75,6 +77,7 @@ async def rotate_key(session: AsyncSession, cache: Cache, key: ApiKey) -> tuple[
     raw, digest, prefix = generate_key()
     key.key_hash = digest
     key.key_prefix = prefix
+    key.key_raw = raw
     key.created_at = datetime.now(UTC)
     await session.commit()
     return key, raw

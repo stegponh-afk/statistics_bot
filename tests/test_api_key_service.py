@@ -17,6 +17,7 @@ async def test_create_find_and_prefix(session):
     key, raw = await api_key_service.create_key(session, owner, "x" * 80)
     assert raw.startswith("sb_") and len(key.name) == 64
     assert key.key_prefix == raw[:10]
+    assert key.key_raw == raw
     assert key.key_hash == api_key_service.hash_key(raw)
     assert (await api_key_service.find_active_key(session, raw)).id == key.id
     assert await api_key_service.find_active_key(session, "nope") is None
@@ -35,6 +36,7 @@ async def test_rotate_keeps_channels_and_revokes_old(session, cache):
 
     new_key, new_raw = await api_key_service.rotate_key(session, cache, key)
     assert new_key.id == key.id and new_raw != raw
+    assert key.key_raw == new_raw
     assert await api_key_service.find_active_key(session, raw) is None
     assert (await api_key_service.find_active_key(session, new_raw)).id == key.id
     assert [c.id for c in await api_key_service.list_key_channels(session, new_key)] == [channel.id]

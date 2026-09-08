@@ -184,6 +184,9 @@ class ApiKey(Base):
     # the owner exactly once, at creation.
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     key_prefix: Mapped[str] = mapped_column(String(12))
+    # The key itself, so the owner's screens can show ready-to-paste
+    # links (the owner already trusts this service with a bot token).
+    key_raw: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(default=True)
     request_count: Mapped[int] = mapped_column(BigInteger, default=0)
 
