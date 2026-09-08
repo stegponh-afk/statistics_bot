@@ -6,13 +6,13 @@ import logging
 
 from aiogram import Router
 from aiogram.enums import ChatMemberStatus
-from aiogram.types import ChatMemberUpdated, Message
+from aiogram.types import ChatMemberUpdated, Message, MessageReactionCountUpdated
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache import Cache
-from app.database.models import User
+from app.database.models import Chat, User
 from app.filters.chat_type import CHANNEL
-from app.services import chat_service
+from app.services import channel_stats, chat_service
 from app.services.subscription_checker import member_cache_key
 from config import settings
 
@@ -48,17 +48,40 @@ async def on_bot_channel_membership_changed(
         await chat_service.resolve_invite_link(event.bot, session, chat)
 
 
-@router.chat_member()
-async def on_subscriber_changed(event: ChatMemberUpdated, cache: Cache) -> None:
-    member = event.new_chat_member
-    subscribed = member.status in SUBSCRIBED_STATUSES or (
-        member.status == ChatMemberStatus.RESTRICTED and getattr(member, "is_member", False)
+def _is_in(member) -> bool:
+    return member.status in SUBSCRIBED_STATUSES or (
+        member.status == ChatMemberStatus.RESTRICTED and bool(getattr(member, "is_member", False))
     )
+
+
+@router.chat_member()
+async def on_subscriber_changed(
+    event: ChatMemberUpdated, session: AsyncSession, cache: Cache, chat_row: Chat | None
+) -> None:
+    member = event.new_chat_member
+    subscribed = _is_in(member)
     await cache.set(
         member_cache_key(event.chat.id, member.user.id),
         "1" if subscribed else "0",
         ttl=settings.forcesub_cache_ttl_seconds,
     )
+    was_in = _is_in(event.old_chat_member)
+    if chat_row is not None and was_in != subscribed and not member.user.is_bot:
+        await channel_stats.record_member_event(
+            session,
+            chat_row,
+            member.user.id,
+            channel_stats.JOIN if subscribed else channel_stats.LEAVE,
+            event.date,
+        )
+        if chat_row.member_count is not None:
+            chat_row.member_count = max(0, chat_row.member_count + (1 if subscribed else -1))
+            await session.commit()
+
+
+@router.message_reaction_count()
+async def on_reaction_count(event: MessageReactionCountUpdated, session: AsyncSession) -> None:
+    await channel_stats.record_reactions(session, event)
 
 
 @router.channel_post()

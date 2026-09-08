@@ -25,16 +25,41 @@ def _chat_icon(chat: Chat) -> str:
     return "📣" if chat.is_channel else "👥"
 
 
-def chats_list_screen(chats: list[Chat]) -> Screen:
-    if not chats:
+def chats_hub_screen(channels: int, groups: int) -> Screen:
+    if not channels and not groups:
         return Screen(
             ru.MY_CHATS_EMPTY,
             rows=[[Btn(ru.BTN_REFRESH, "chats:refresh")], [Btn(ru.BTN_BACK, "menu:main")]],
         )
+    return Screen(
+        ru.MY_CHATS_HUB.format(channels=channels, groups=groups),
+        rows=[
+            [
+                Btn(ru.BTN_CHATS_CHANNELS.format(count=channels), "chats:list:channels"),
+                Btn(ru.BTN_CHATS_GROUPS.format(count=groups), "chats:list:groups"),
+            ],
+            [Btn(ru.BTN_REFRESH, "chats:refresh")],
+            [Btn(ru.BTN_BACK, "menu:main")],
+        ],
+    )
+
+
+def chats_list_screen(chats: list[Chat], *, channels: bool) -> Screen:
+    title = ru.MY_CHANNELS_TITLE if channels else ru.MY_GROUPS_TITLE
+    if not chats:
+        text = f"{title}\n{ru.SEPARATOR}\n" + (
+            ru.MY_CHANNELS_EMPTY if channels else ru.MY_GROUPS_EMPTY
+        )
+        return Screen(
+            text, rows=[[Btn(ru.BTN_REFRESH, "chats:refresh")], [Btn(ru.BTN_BACK, "chats:list")]]
+        )
     rows = [[Btn(f"{_chat_icon(c)} {c.title or c.telegram_id}", f"chat:{c.id}")] for c in chats]
-    rows.append([Btn(ru.BTN_REFRESH, "chats:refresh")])
-    rows.append([Btn(ru.BTN_BACK, "menu:main")])
-    return Screen(f"{ru.MY_CHATS_TITLE}\n{ru.SEPARATOR}\n{ru.MY_CHATS_HINT}", rows=rows)
+    rows.append([Btn(ru.BTN_BACK, "chats:list")])
+    return Screen(f"{title}\n{ru.SEPARATOR}\n{ru.MY_CHATS_HINT}", rows=rows)
+
+
+def back_target(chat: Chat) -> str:
+    return "chats:list:channels" if chat.is_channel else "chats:list:groups"
 
 
 def _bot_status_line(chat: Chat) -> str:
@@ -106,7 +131,7 @@ def chat_card_screen(
             ]
         )
     rows.append([Btn(ru.BTN_REFRESH, f"chat:{chat.id}:refresh")])
-    rows.append([Btn(ru.BTN_BACK, "chats:list")])
+    rows.append([Btn(ru.BTN_BACK, back_target(chat))])
     return Screen(text, rows=rows)
 
 
@@ -160,26 +185,45 @@ async def comments_status(
     return line, enabled
 
 
+def _split(chats: list[Chat]) -> tuple[list[Chat], list[Chat]]:
+    return [c for c in chats if c.is_channel], [c for c in chats if not c.is_channel]
+
+
 @router.message(Command("chats"))
 async def cmd_chats(message: Message, session: AsyncSession, user: User | None) -> None:
     if user is None:
         return
-    chats = await chat_service.list_admin_chats(session, user)
+    channels, groups = _split(await chat_service.list_admin_chats(session, user))
     await send(
         message.bot,
         message.chat.id,
-        chats_list_screen(chats),
+        chats_hub_screen(len(channels), len(groups)),
         rich_buttons=user.rich_buttons_enabled,
     )
 
 
 @router.callback_query(F.data == "chats:list")
+async def cb_chats_hub(callback: CallbackQuery, session: AsyncSession, user: User | None) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    channels, groups = _split(await chat_service.list_admin_chats(session, user))
+    await respond(
+        callback,
+        chats_hub_screen(len(channels), len(groups)),
+        rich_buttons=user.rich_buttons_enabled,
+    )
+
+
+@router.callback_query(F.data.in_({"chats:list:channels", "chats:list:groups"}))
 async def cb_chats_list(callback: CallbackQuery, session: AsyncSession, user: User | None) -> None:
     if user is None:
         await callback.answer()
         return
-    chats = await chat_service.list_admin_chats(session, user)
-    await respond(callback, chats_list_screen(chats), rich_buttons=user.rich_buttons_enabled)
+    channels, groups = _split(await chat_service.list_admin_chats(session, user))
+    want_channels = callback.data.endswith("channels")
+    screen = chats_list_screen(channels if want_channels else groups, channels=want_channels)
+    await respond(callback, screen, rich_buttons=user.rich_buttons_enabled)
 
 
 @router.callback_query(F.data == "chats:refresh")
@@ -189,15 +233,16 @@ async def cb_chats_refresh(
     if user is None:
         await callback.answer()
         return
-    # Re-read every chat the bot knows about where this user is (or was) an
-    # admin — a chat the bot was added to before it could record the
-    # my_chat_member update shows up only after this.
     for chat in await chat_service.list_admin_chats(session, user):
         await chat_service.refresh_bot_membership(callback.bot, session, chat)
         await chat_service.sync_admins(callback.bot, session, chat, cache)
-    chats = await chat_service.list_admin_chats(session, user)
+    channels, groups = _split(await chat_service.list_admin_chats(session, user))
     await callback.answer(ru.MY_CHATS_REFRESHED)
-    await respond(callback, chats_list_screen(chats), rich_buttons=user.rich_buttons_enabled)
+    await respond(
+        callback,
+        chats_hub_screen(len(channels), len(groups)),
+        rich_buttons=user.rich_buttons_enabled,
+    )
 
 
 @router.callback_query(F.data.regexp(r"^chat:(\d+)$"))

@@ -680,3 +680,56 @@ REWARD_RESET_DONE = "Список получивших очищен — нагр
 SUB_STILL_MISSING = "Подписка пока не найдена"
 SUB_LINK_INVALID = "Ссылка устарела или награда больше не выдаётся."
 SUB_UNAVAILABLE = "Не удалось проверить подписку: бот не администратор канала."
+
+# --- «Чаты» hub ---
+MY_CHATS_HUB = (
+    "💬 <b>Чаты</b>\n"
+    f"{SEPARATOR}\n"
+    "Каналов: <b>{channels}</b> · групп: <b>{groups}</b>\n"
+    "Выберите, что открыть:"
+)
+BTN_CHATS_CHANNELS = "📣 Каналы ({count})"
+BTN_CHATS_GROUPS = "👥 Группы ({count})"
+MY_CHANNELS_TITLE = "📣 <b>Каналы</b>"
+MY_GROUPS_TITLE = "👥 <b>Группы</b>"
+MY_CHANNELS_EMPTY = (
+    "Пока ни одного канала. Добавьте этого бота администратором канала "
+    "(Управление → Администраторы → Добавить), права не нужны."
+)
+MY_GROUPS_EMPTY = (
+    "Пока ни одной группы. Добавьте этого бота в группу и назначьте администратором "
+    "с правом «Удалять сообщения»."
+)
+
+# --- channel statistics ---
+STATS_MEMBERS_FLOW_LINE = "Участников: <b>{count}</b> (сегодня +{joins} / −{leaves})\n"
+STATS_CHANNEL_OVERVIEW = (
+    "📣 <b>Статистика: {title}</b>\n"
+    f"{SEPARATOR}\n"
+    "<b>Подписчики</b>\n"
+    "Сейчас: <b>{members}</b>\n"
+    "Сегодня: +{today_joins} / −{today_leaves} (<b>{today_net}</b>)\n"
+    "Вчера: +{yday_joins} / −{yday_leaves} (<b>{yday_net}</b>)\n"
+    "За 7 дней: <b>{week}</b> · за 30 дней: <b>{month}</b>\n\n"
+    "<b>Посты</b>\n"
+    "Сегодня: <b>{posts_today}</b> · за 7 дней: <b>{posts_week}</b> · "
+    "за 30 дней: <b>{posts_month}</b>\n"
+    "Реакций на пост в среднем (30 дней): <b>{avg_reactions}</b>\n"
+    "Лучший пост: {best}\n"
+    "{comments_line}"
+    "\n<i>Просмотры постов Telegram ботам не отдаёт. Приток/отток считается с момента "
+    "добавления бота, история подписчиков копится по дням. Часовой пояс: {tz}</i>"
+)
+STATS_BEST_POST = "<b>{total}</b> реакций — {link}"
+STATS_COMMENTS_LINE = "Комментариев за 7 дней: <b>{count}</b>\n"
+BTN_STATS_DYNAMICS = "📈 Динамика"
+BTN_STATS_POSTS = "🔥 Посты"
+STATS_DYNAMICS_TITLE = "📈 <b>Последние 14 дней</b>"
+STATS_DYNAMICS_HEADER = "<code>дата   подписч.  +/−      постов</code>"
+STATS_DYNAMICS_ROW = "<code>{day}  {subscribers:>8}  +{joins}/−{leaves}  {posts}</code>"
+STATS_TOP_POSTS_TITLE = "🔥 <b>Посты по реакциям за 30 дней</b>"
+STATS_TOP_POSTS_EMPTY = (
+    "Пока нет данных. Реакции считаются по постам, опубликованным после добавления бота, "
+    "и приходят от Telegram с задержкой в несколько минут."
+)
+STATS_TOP_POST_ROW = "{n}. <b>{total}</b> реакций · {day} · {link}"

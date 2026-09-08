@@ -160,6 +160,43 @@ class ChatWhitelist(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MemberEvent(Base):
+    """A subscriber joined or left (from chat_member updates)."""
+
+    __tablename__ = "member_events"
+    __table_args__ = (Index("ix_member_events_chat_day", "chat_tg_id", "local_day"),)
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    chat_tg_id: Mapped[int] = mapped_column(BigInteger)
+    user_tg_id: Mapped[int] = mapped_column(BigInteger)
+    kind: Mapped[str] = mapped_column(String(8))  # "join" | "leave"
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    local_day: Mapped[date] = mapped_column(Date)
+
+
+class MemberSnapshot(Base):
+    """Subscriber count per chat per local day (last value of the day)."""
+
+    __tablename__ = "member_snapshots"
+
+    chat_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    local_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    member_count: Mapped[int] = mapped_column()
+
+
+class PostReaction(Base):
+    """Anonymous reaction total per post (message_reaction_count updates)."""
+
+    __tablename__ = "post_reactions"
+
+    chat_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    total: Mapped[int] = mapped_column(default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class RewardClaim(Base):
     """A user already received the channel's «награда за подписку»."""
 

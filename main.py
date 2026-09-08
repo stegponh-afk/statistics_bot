@@ -33,7 +33,14 @@ logger = logging.getLogger(__name__)
 # Update types the bot must be polled for. Listed explicitly (rather than
 # derived from registered handlers) because chat_member is delivered only
 # when asked for, and channel_post is consumed by a middleware.
-ALLOWED_UPDATES = ["message", "callback_query", "my_chat_member", "chat_member", "channel_post"]
+ALLOWED_UPDATES = [
+    "message",
+    "callback_query",
+    "my_chat_member",
+    "chat_member",
+    "channel_post",
+    "message_reaction_count",
+]
 
 
 async def setup_commands(bot: Bot) -> None:

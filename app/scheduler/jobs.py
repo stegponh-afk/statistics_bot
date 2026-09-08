@@ -28,6 +28,25 @@ async def job_resync_admins(bot: Bot, cache: Cache) -> None:
     logger.info("resynced admins for %d chats", len(chats))
 
 
+async def job_snapshot_members(bot: Bot) -> None:
+    """Hourly: refresh subscriber counts so the per-day history has a
+    value even for chats nobody opened today."""
+    async with async_session_factory() as session:
+        chats = list(
+            await session.scalars(
+                select(Chat)
+                .where(Chat.bot_status.in_([BotStatus.MEMBER, BotStatus.ADMINISTRATOR]))
+                .limit(500)
+            )
+        )
+        for chat in chats:
+            chat.member_count_updated_at = None
+            try:
+                await chat_service.get_member_count(bot, session, chat)
+            except Exception:  # noqa: BLE001
+                logger.exception("member snapshot failed for %s", chat.telegram_id)
+
+
 async def job_purge_stats() -> None:
     async with async_session_factory() as session:
         events, words = await stats_service.purge_older_than(session, settings.stats_retention_days)
@@ -52,6 +71,9 @@ def setup_scheduler(bot: Bot, cache: Cache) -> AsyncIOScheduler:
         job_resync_admins, CronTrigger(hour=4, minute=30), args=[bot, cache], id="resync_admins"
     )
     scheduler.add_job(job_purge_stats, CronTrigger(hour=4, minute=0), id="purge_stats")
+    scheduler.add_job(
+        job_snapshot_members, CronTrigger(minute=50), args=[bot], id="snapshot_members"
+    )
     scheduler.add_job(
         job_run_due_broadcasts,
         IntervalTrigger(seconds=30),

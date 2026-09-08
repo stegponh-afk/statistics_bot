@@ -324,6 +324,9 @@ async def get_member_count(bot: Bot, session: AsyncSession, chat: Chat) -> int |
     chat.member_count = count
     chat.member_count_updated_at = datetime.now(UTC)
     await session.commit()
+    from app.services import channel_stats  # local: channel_stats imports models only
+
+    await channel_stats.snapshot_member_count(session, chat, count)
     return count
 
 
