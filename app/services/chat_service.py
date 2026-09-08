@@ -7,6 +7,7 @@ The set of admin telegram ids per chat is additionally cached (Redis set,
 ADMIN_SYNC_TTL) so the per-message gate never touches the database.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -149,14 +150,30 @@ async def refresh_bot_membership(bot: Bot, session: AsyncSession, chat: Chat) ->
 
 
 async def sync_admins(
-    bot: Bot, session: AsyncSession, chat: Chat, cache: Cache | None = None
+    bot: Bot,
+    session: AsyncSession,
+    chat: Chat,
+    cache: Cache | None = None,
+    *,
+    retries: int = 0,
+    retry_delay: float = 2.0,
 ) -> list[ChatAdmin]:
     """getChatAdministrators -> users + chat_admins. Returns the new rows;
-    on API failure keeps what's there and returns it."""
-    try:
-        members = await bot.get_chat_administrators(chat.telegram_id)
-    except (TelegramBadRequest, TelegramForbiddenError) as e:
-        logger.info("sync_admins(%s) failed: %s", chat.telegram_id, e)
+    on API failure keeps what's there and returns it.
+
+    Right after the bot is promoted Telegram can still answer "member list
+    is inaccessible" for a moment — callers reacting to my_chat_member pass
+    retries=1 so a second attempt happens after retry_delay seconds."""
+    members = None
+    for attempt in range(retries + 1):
+        try:
+            members = await bot.get_chat_administrators(chat.telegram_id)
+            break
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.info("sync_admins(%s) attempt %d failed: %s", chat.telegram_id, attempt + 1, e)
+            if attempt < retries:
+                await asyncio.sleep(retry_delay)
+    if members is None:
         return list(await session.scalars(select(ChatAdmin).where(ChatAdmin.chat_id == chat.id)))
 
     rows: list[ChatAdmin] = []
@@ -176,10 +193,24 @@ async def sync_admins(
     session.add_all(rows)
     chat.admins_synced_at = datetime.now(UTC)
     await session.commit()
+    logger.info("sync_admins(%s): %d admins", chat.telegram_id, len(rows))
 
     if cache is not None:
         await invalidate_admin_cache(cache, chat.telegram_id)
     return rows
+
+
+async def remember_admin(
+    session: AsyncSession, cache: Cache | None, chat: Chat, user: User
+) -> None:
+    """Records `user` as an admin of `chat` without asking Telegram — for
+    whoever added/promoted the bot (only admins can), so the chat reaches
+    their «Мои чаты» even while getChatAdministrators is refused."""
+    if await session.get(ChatAdmin, {"chat_id": chat.id, "user_id": user.id}) is None:
+        session.add(ChatAdmin(chat_id=chat.id, user_id=user.id, status=AdminStatus.ADMINISTRATOR))
+        await session.commit()
+        if cache is not None:
+            await invalidate_admin_cache(cache, chat.telegram_id)
 
 
 def admins_stale(chat: Chat, now: datetime | None = None) -> bool:

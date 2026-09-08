@@ -30,7 +30,9 @@ async def on_bot_membership_changed(
     await chat_service.apply_bot_membership(session, chat, event.new_chat_member)
     logger.info("bot in %s (%s): %s", event.chat.id, event.chat.title, event.new_chat_member.status)
     if chat.is_active:
-        await chat_service.sync_admins(event.bot, session, chat, cache)
+        if user is not None:
+            await chat_service.remember_admin(session, cache, chat, user)
+        await chat_service.sync_admins(event.bot, session, chat, cache, retries=1)
     else:
         await chat_service.invalidate_admin_cache(cache, chat.telegram_id)
 

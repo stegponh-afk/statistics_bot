@@ -136,3 +136,32 @@ def test_enum_columns_store_values_not_member_names():
     assert Chat.__table__.c.bot_status.type.enums == ["member", "administrator", "left", "kicked"]
     assert Chat.__table__.c.type.type.enums == ["group", "supergroup", "channel"]
     assert ChatAdmin.__table__.c.status.type.enums == ["creator", "administrator"]
+
+
+async def test_sync_admins_retries_after_transient_refusal(session, bot: FakeBot, monkeypatch):
+    chat = await chat_service.upsert_chat(session, _tg_chat())
+    attempts = {"n": 0}
+
+    async def flaky(chat_id):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise TelegramBadRequest(
+                method=GetChatAdministrators(chat_id=chat_id), message="member list is inaccessible"
+            )
+        return [ChatMemberOwner(user=tg_user(1), is_anonymous=False)]
+
+    monkeypatch.setattr(bot, "get_chat_administrators", flaky)
+    rows = await chat_service.sync_admins(bot, session, chat, retries=1, retry_delay=0)
+    assert attempts["n"] == 2 and len(rows) == 1
+
+
+async def test_remember_admin_records_the_adder(session, cache):
+    chat = await chat_service.upsert_chat(session, _tg_chat())
+    user = User(telegram_id=5)
+    session.add(user)
+    await session.commit()
+    await chat_service.remember_admin(session, cache, chat, user)
+    await chat_service.remember_admin(session, cache, chat, user)  # idempotent
+    assert [c.telegram_id for c in await chat_service.list_admin_chats(session, user)] == [
+        chat.telegram_id
+    ]

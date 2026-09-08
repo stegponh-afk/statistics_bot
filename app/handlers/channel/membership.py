@@ -42,7 +42,9 @@ async def on_bot_channel_membership_changed(
         event.new_chat_member.status,
     )
     if chat.is_active:
-        await chat_service.sync_admins(event.bot, session, chat, cache)
+        if user is not None:
+            await chat_service.remember_admin(session, cache, chat, user)
+        await chat_service.sync_admins(event.bot, session, chat, cache, retries=1)
         await chat_service.resolve_invite_link(event.bot, session, chat)
 
 
