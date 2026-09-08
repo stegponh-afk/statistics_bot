@@ -11,7 +11,16 @@ from app.handlers.group import commands as group_commands
 from app.handlers.group import gate_callbacks as group_gate
 from app.handlers.group import membership as group_membership
 from app.handlers.group import stats_callbacks as group_stats
-from app.handlers.private import channels_binding, chat_panel, my_chats, settings, start, whitelist
+from app.handlers.private import (
+    admin,
+    api_keys,
+    channels_binding,
+    chat_panel,
+    my_chats,
+    settings,
+    start,
+    whitelist,
+)
 from app.handlers.private import help as private_help
 from app.middlewares.gate import ForceSubGateMiddleware
 from app.middlewares.stats_log import StatsLogMiddleware
@@ -28,6 +37,8 @@ def build_router(cache: Cache) -> Router:
     private_router.include_router(chat_panel.router)
     private_router.include_router(channels_binding.router)
     private_router.include_router(whitelist.router)
+    private_router.include_router(api_keys.router)
+    private_router.include_router(admin.router)
     private_router.include_router(settings.router)
     private_router.include_router(private_help.router)
 

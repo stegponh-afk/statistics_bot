@@ -1,0 +1,143 @@
+# statistics_bot — помощник админов каналов, групп и ботов
+
+Telegram-бот на Bot API 10.3: ответы в группах приходят **ephemeral-сообщениями**
+(их видит только тот, кто вызвал команду), а меню оформлено в «новом стиле» —
+кнопки встроены прямо в сообщение (Rich Messages).
+
+## Что умеет
+
+- 📊 **Статистика групп и каналов** — сообщений за сегодня / 7 / 30 дней, активные
+  участники, топ-5, популярные слова, активность по часам. `/stats` для админов,
+  `/me` для любого участника — ответ видит только он. Те же экраны есть в личке
+  («Мои чаты → чат → Статистика»). Хранятся только метаданные и частоты слов,
+  текст сообщений в базу не пишется.
+- 🔒 **Обязательная подписка в группе** — сообщения неподписанных удаляются, а им
+  приходит ephemeral-подсказка с кнопками «Подписаться» и «Проверить».
+  Администраторы, анонимные админы и белый список не проверяются.
+- 🔑 **HTTP API для ваших ботов** — один запрос `GET /v1/check?user_id=…` с
+  API-ключом отвечает, подписан ли пользователь на ваши каналы, и отдаёт ссылки
+  на недостающие.
+
+## Быстрый старт
+
+```bash
+cp .env.example .env      # заполнить BOT_TOKEN, OWNER_IDS, POSTGRES_PASSWORD, API_PUBLIC_URL
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+Compose поднимает бота, PostgreSQL 16 и Redis 7; миграции применяются при старте
+(`alembic upgrade head`). Порт `API_PORT` (по умолчанию 8080) пробрасывается наружу —
+поставьте перед ним реверс-прокси с HTTPS.
+
+## Настройка в BotFather
+
+1. `/setprivacy` → **Disable** — иначе бот не видит обычные сообщения в группах, где он
+   не администратор. После смены режима бота нужно **удалить и заново добавить** в
+   группы.
+2. `/setjoingroups` → **Enable**.
+3. Команды выставляются самим ботом при старте (`/setcommands` не нужен): в группах
+   `/me`, `/help`, для админов `/stats`, `/whitelist`; в личке `/start`, `/chats`,
+   `/keys`, `/help`.
+
+## Подключение чатов
+
+**Группа.** Добавьте бота и назначьте администратором с правом «Удалять сообщения»
+(для гейта) и «Приглашать пользователей» (чтобы бот мог получить ссылку на приватный
+канал). Чат появится в «Мои чаты» у всех его администраторов.
+
+**Канал.** Добавьте бота администратором с любым правом — без этого Telegram не
+позволяет вызывать `getChatMember`, то есть проверять подписку.
+
+**Гейт.** В личке: «Мои чаты» → группа → «Каналы» → отметить каналы →
+«Обязательная подписка: ВКЛ». Белый список — там же, либо командой `/whitelist`
+ответом на сообщение участника.
+
+## HTTP API
+
+Ключ создаётся в личке («API-ключи» / `/keys`), показывается один раз и привязывается к
+каналам. В своём боте перед выдачей контента:
+
+```bash
+curl -H "Authorization: Bearer sb_XXXX" \
+  "https://api.example.com/v1/check?user_id=123456789"
+```
+
+```json
+{
+  "ok": true,
+  "user_id": 123456789,
+  "subscribed": false,
+  "missing": [
+    {"chat_id": -1001234567890, "title": "Мой канал", "username": "mychannel",
+     "invite_link": "https://t.me/mychannel"}
+  ],
+  "unavailable": [],
+  "cached": false,
+  "checked_at": "2026-09-08T10:00:00Z"
+}
+```
+
+- `subscribed=false` → покажите пользователю кнопки со ссылками из `missing` и
+  повторите запрос после подписки. Результат кэшируется `FORCESUB_CACHE_TTL_SECONDS`
+  (60 с); `&force=1` проверяет заново.
+- `unavailable` — каналы, которые не удалось проверить (бот больше не админ канала,
+  `bot_not_admin`, или лимит Telegram, `rate_limited`). Они не считаются против
+  пользователя. Если проверить нельзя ни один канал — `503 telegram_unavailable`.
+- `GET /v1/channels` — каналы ключа (для отрисовки кнопок заранее).
+- Ошибки: `400 bad_request`, `401 unauthorized`, `429 rate_limited` (+ `Retry-After`).
+  Лимит `API_RATE_LIMIT_PER_MINUTE` на ключ (600), для неавторизованных запросов —
+  `API_UNAUTH_RATE_LIMIT_PER_MINUTE` на IP.
+
+Пример на aiogram:
+
+```python
+async def ensure_subscribed(bot, user_id) -> bool:
+    async with aiohttp.ClientSession() as http:
+        async with http.get(
+            f"{API}/v1/check", params={"user_id": user_id},
+            headers={"Authorization": f"Bearer {KEY}"},
+        ) as resp:
+            data = await resp.json()
+    if data.get("subscribed"):
+        return True
+    kb = InlineKeyboardBuilder()
+    for ch in data.get("missing", []):
+        if ch["invite_link"]:
+            kb.row(InlineKeyboardButton(text=ch["title"], url=ch["invite_link"]))
+    kb.row(InlineKeyboardButton(text="✅ Проверить", callback_data="recheck"))
+    await bot.send_message(user_id, "Подпишитесь на каналы:", reply_markup=kb.as_markup())
+    return False
+```
+
+## Что хранится
+
+`message_events` — chat_id, user_id, дата, тип, длина текста (без самого текста);
+`word_stats_daily` — частоты слов по дням. Старше `STATS_RETENTION_DAYS` (90) удаляется
+ежедневно. Часовой пояс для «сегодня» и активности по часам — `DEFAULT_TIMEZONE`.
+
+## Как это устроено (ephemeral и «новый стиль»)
+
+- Команды в группах помечены `is_ephemeral=True` в `setMyCommands`: выбранная из меню
+  команда невидима для остальных, ответ идёт через `ephemeral_message_parameters`.
+- Кнопки внутри ephemeral-сообщения обрабатываются через `editEphemeralMessageText`;
+  кнопки на публичном сообщении — новым ephemeral с `replace_callback_query_message`
+  (`app/ui/screen.py::respond`).
+- Меню рендерится как `InputRichMessage` с `InputRichBlockButtons`; в «Настройках»
+  можно вернуть классическую клавиатуру. При отказе Telegram от rich-формы всегда есть
+  текстовый fallback.
+
+## Разработка
+
+```bash
+python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt
+.venv/Scripts/ruff check . && .venv/Scripts/pytest -q
+```
+
+Тесты идут на sqlite в памяти с `MemoryCache` и `FakeBot` (`tests/fakes.py`), Redis и
+PostgreSQL не нужны.
+
+Структура: `app/handlers` (private / group / channel), `app/middlewares` (сессия БД,
+контекст чата, гейт, лог статистики), `app/services` (чаты и админы, статистика,
+токенизатор, проверка подписки, ключи, rate limit), `app/screens` (сборка экранов),
+`app/ui` (рендер rich/ephemeral), `app/api` (aiohttp), `alembic/`.
