@@ -1,10 +1,12 @@
 """«Рассылка»: compose a message, pick chats, send now / at a time /
 on a weekly schedule; list and manage existing broadcasts.
 
-  bc:menu                  the section
-  bc:new                   start composing (FSM)
+  bc:menu | bc:cancel      leave the wizard (the draft is kept) -> the section
+  bc:new                   start composing (FSM)   bc:new:fresh  drop the draft first
+  bc:draft | bc:draft:del  resume / delete the saved draft
   bc:t:c:{chat_id}         toggle a chat target      bc:t:b:{key_id}  toggle a bot
   bc:t:next                targets chosen -> ask for the message
+  bc:b:{step}              one step back
   bc:nobtn                 skip buttons -> preview
   bc:now | bc:at | bc:rec  choose when
   bc:d:{0..6} | bc:d:all | bc:d:next   weekday toggles for recurring
@@ -21,7 +23,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache import Cache
-from app.database.models import Broadcast, BroadcastKind, BroadcastStatus, Chat, User
+from app.database.models import (
+    Broadcast,
+    BroadcastDraft,
+    BroadcastKind,
+    BroadcastStatus,
+    Chat,
+    User,
+)
 from app.services import broadcast_delivery, broadcast_service, chat_service
 from app.services.broadcast_service import (
     WEEKDAY_LABELS,
@@ -65,14 +74,30 @@ def _tz() -> str:
 # --- screens --------------------------------------------------------------
 
 
-def menu_screen() -> Screen:
-    return Screen(
-        ru.BROADCAST_MENU,
-        rows=[
-            [Btn(ru.BTN_BROADCAST_NEW, "bc:new"), Btn(ru.BTN_BROADCAST_LIST, "bc:list")],
-            [Btn(ru.BTN_BACK, "menu:main")],
-        ],
+def _draft_snippet(draft: BroadcastDraft) -> str:
+    content = draft.data.get("content")
+    return _snippet(Content.from_json(content)) if content else ru.BROADCAST_DRAFT_NO_TEXT
+
+
+async def _draft(session: AsyncSession, user: User | None) -> BroadcastDraft | None:
+    return await broadcast_service.load_draft(session, user) if user else None
+
+
+async def menu_screen(session: AsyncSession, user: User | None) -> Screen:
+    draft = await _draft(session, user)
+    line = (
+        ru.BROADCAST_DRAFT_LINE.format(
+            when=format_local(draft.updated_at, _tz()), snippet=_draft_snippet(draft)
+        )
+        if draft
+        else ""
     )
+    rows = [[Btn(ru.BTN_BROADCAST_NEW, "bc:new"), Btn(ru.BTN_BROADCAST_LIST, "bc:list")]]
+    if draft:
+        rows.insert(0, [Btn(ru.BTN_DRAFT_CONTINUE, "bc:draft", STYLE_PRIMARY)])
+        rows.append([Btn(ru.BTN_DRAFT_DELETE, "bc:draft:del", STYLE_DANGER)])
+    rows.append([Btn(ru.BTN_BACK, "menu:main")])
+    return Screen(ru.BROADCAST_MENU.format(draft=line), rows=rows)
 
 
 async def _available_targets(session: AsyncSession, user: User) -> list[Chat]:
@@ -90,8 +115,28 @@ async def targets_screen(session: AsyncSession, user: User, chosen_chats: set[in
         ).format(title=title)
         rows.append([Btn(label, f"bc:t:c:{chat.id}")])
     rows.append([Btn(ru.BTN_NEXT, "bc:t:next", STYLE_PRIMARY)])
-    rows.append([Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)])
+    rows.append(_leave_row())
     return Screen(ru.BROADCAST_PICK_TARGETS.format(count=len(chosen_chats)), rows=rows)
+
+
+def _leave_row(back_to: str | None = None) -> list[Btn]:
+    """Every step of the wizard can be stepped back from, and leaving it
+    keeps the draft — so nothing an admin typed is ever one tap from gone."""
+    row = [Btn(ru.BTN_WIZARD_EXIT, "bc:cancel", STYLE_DANGER)]
+    if back_to:
+        row.insert(0, Btn(ru.BTN_BACK, f"bc:b:{back_to}"))
+    return row
+
+
+def message_screen() -> Screen:
+    return Screen(ru.BROADCAST_ASK_MESSAGE, rows=[_leave_row("targets")])
+
+
+def buttons_screen() -> Screen:
+    return Screen(
+        ru.BROADCAST_ASK_BUTTONS,
+        rows=[[Btn(ru.BTN_NO_BUTTONS, "bc:nobtn")], _leave_row("message")],
+    )
 
 
 def days_screen(chosen: set[int]) -> Screen:
@@ -100,7 +145,7 @@ def days_screen(chosen: set[int]) -> Screen:
     ]
     rows = [day_buttons[:4], day_buttons[4:], [Btn(ru.BTN_EVERY_DAY, "bc:d:all")]]
     rows.append([Btn(ru.BTN_NEXT, "bc:d:next", STYLE_PRIMARY)])
-    rows.append([Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)])
+    rows.append(_leave_row("schedule"))
     label = format_days(sorted(chosen)) if chosen else "—"
     return Screen(ru.BROADCAST_PICK_DAYS.format(days=label), rows=rows)
 
@@ -181,20 +226,64 @@ async def card_screen(session: AsyncSession, b: Broadcast) -> Screen:
 
 
 @router.message(Command("broadcast"))
-async def cmd_broadcast(message: Message, user: User | None, state: FSMContext) -> None:
+async def cmd_broadcast(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
     if user is None:
         return
+    await _keep_draft(session, user, state)
+    await send(
+        message.bot, message.chat.id, await menu_screen(session, user), rich_buttons=_rich(user)
+    )
+
+
+# Which state to come back to. The steps that only ask for a date or a
+# weekday are transient: the draft returns to the preview instead.
+STEPS = {
+    "targets": BroadcastNew.targets,
+    "message": BroadcastNew.message,
+    "buttons": BroadcastNew.buttons,
+    "schedule": BroadcastNew.schedule,
+}
+
+
+def _step_of(state_name: str | None) -> str:
+    step = (state_name or "").split(":")[-1]
+    return step if step in STEPS else "schedule"
+
+
+async def _remember(session: AsyncSession, user: User, step: str, data: dict) -> None:
+    """Stores the draft, or removes it once nothing is left to remember."""
+    if data.get("content") or data.get("chats"):
+        await broadcast_service.save_draft(session, user, step, data)
+    else:
+        await broadcast_service.drop_draft(session, user)
+
+
+async def _keep_draft(session: AsyncSession, user: User, state: FSMContext) -> bool:
+    """Saves what has been composed so far and leaves the wizard. Returns
+    whether there was anything worth keeping."""
+    data = await state.get_data()
+    keep = bool(data.get("content") or data.get("chats"))
+    if keep:
+        await broadcast_service.save_draft(session, user, _step_of(await state.get_state()), data)
     await state.clear()
-    await send(message.bot, message.chat.id, menu_screen(), rich_buttons=_rich(user))
+    return keep
 
 
-@router.callback_query(F.data == "bc:menu")
-async def cb_menu(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
-    await state.clear()
-    await respond(callback, menu_screen(), rich_buttons=_rich(user))
+@router.callback_query(F.data.in_({"bc:menu", "bc:cancel"}))
+async def cb_menu(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    saved = await _keep_draft(session, user, state)
+    await callback.answer(ru.BROADCAST_DRAFT_SAVED if saved else "")
+    await respond(callback, await menu_screen(session, user), rich_buttons=_rich(user))
 
 
-@router.callback_query(F.data == "bc:new")
+@router.callback_query(F.data.in_({"bc:new", "bc:new:fresh"}))
 async def cb_new(
     callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
 ) -> None:
@@ -208,9 +297,108 @@ async def cb_new(
             rich_buttons=_rich(user),
         )
         return
+    draft = await _draft(session, user)
+    if draft is not None and callback.data == "bc:new":
+        # Starting over would overwrite the draft, so say so first.
+        screen = Screen(
+            ru.BROADCAST_DRAFT_EXISTS.format(
+                when=format_local(draft.updated_at, _tz()), snippet=_draft_snippet(draft)
+            ),
+            rows=[
+                [Btn(ru.BTN_DRAFT_CONTINUE, "bc:draft", STYLE_PRIMARY)],
+                [Btn(ru.BTN_DRAFT_FRESH, "bc:new:fresh", STYLE_DANGER)],
+                [Btn(ru.BTN_BACK, "bc:menu")],
+            ],
+        )
+        await respond(callback, screen, rich_buttons=_rich(user))
+        return
+    await broadcast_service.drop_draft(session, user)
     await state.set_state(BroadcastNew.targets)
     await state.set_data({"chats": []})
     await respond(callback, await targets_screen(session, user, set()), rich_buttons=_rich(user))
+
+
+@router.callback_query(F.data == "bc:draft")
+async def cb_draft_resume(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    draft = await _draft(session, user)
+    if draft is None:
+        await callback.answer(ru.BROADCAST_DRAFT_GONE, show_alert=True)
+        await respond(callback, await menu_screen(session, user), rich_buttons=_rich(user))
+        return
+    step = draft.step if draft.step in STEPS else "schedule"
+    await state.set_data(dict(draft.data))
+    await state.set_state(STEPS[step])
+    await callback.answer()
+    if step == "schedule":
+        # The composed post is shown again above the preview: after a day
+        # away nobody remembers what exactly they had written.
+        await _show_preview(callback.message.chat.id, callback.bot, session, user, state)
+        return
+    await _show_step(callback, session, user, state, step)
+
+
+@router.callback_query(F.data == "bc:draft:del")
+async def cb_draft_delete(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    await state.clear()
+    await broadcast_service.drop_draft(session, user)
+    await callback.answer(ru.BROADCAST_DRAFT_DROPPED)
+    await respond(callback, await menu_screen(session, user), rich_buttons=_rich(user))
+
+
+async def _show_step(
+    callback: CallbackQuery, session: AsyncSession, user: User, state: FSMContext, step: str
+) -> None:
+    """Renders one step of the wizard in place (used by «Назад» and by
+    resuming a draft)."""
+    data = await state.get_data()
+    await state.set_state(STEPS[step])
+    if step == "targets":
+        screen = await targets_screen(session, user, set(data.get("chats", [])))
+    elif step == "message":
+        screen = message_screen()
+    elif step == "buttons":
+        screen = buttons_screen()
+    else:
+        screen = await preview_screen(
+            callback.bot,
+            session,
+            user,
+            data,
+            has_channels=await _has_channel_target(session, list(data.get("chats", []))),
+        )
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(F.data.regexp(r"^bc:b:(\w+)$"))
+async def cb_back(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    step = callback.data.rsplit(":", 1)[1]
+    data = await state.get_data()
+    if step == "days":
+        await state.set_state(BroadcastNew.days)
+        await respond(callback, days_screen(set(data.get("days", []))), rich_buttons=_rich(user))
+        return
+    if step not in STEPS or (step != "targets" and "content" not in data):
+        # Nothing to go back to (a stale screen after a restart).
+        await callback.answer()
+        await respond(callback, await menu_screen(session, user), rich_buttons=_rich(user))
+        return
+    await callback.answer()
+    await _show_step(callback, session, user, state, step)
 
 
 @router.callback_query(BroadcastNew.targets, F.data.regexp(r"^bc:t:c:(\d+)$"))
@@ -226,24 +414,34 @@ async def cb_toggle_target(
     chosen.symmetric_difference_update({target_id})
     data["chats"] = sorted(chosen)
     await state.set_data(data)
+    # Saved on every tap, not only when the step is finished: another
+    # section can take over the FSM at any moment.
+    await _remember(session, user, "targets", data)
     await respond(
         callback, await targets_screen(session, user, set(data["chats"])), rich_buttons=_rich(user)
     )
 
 
 @router.callback_query(BroadcastNew.targets, F.data == "bc:t:next")
-async def cb_targets_next(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
+async def cb_targets_next(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
     data = await state.get_data()
     if not data.get("chats"):
         await callback.answer(ru.BROADCAST_NEED_TARGET, show_alert=True)
         return
     await state.set_state(BroadcastNew.message)
-    screen = Screen(ru.BROADCAST_ASK_MESSAGE, rows=[[Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)]])
-    await respond(callback, screen, rich_buttons=_rich(user))
+    await _remember(session, user, "message", data)
+    await respond(callback, message_screen(), rich_buttons=_rich(user))
 
 
 @router.message(BroadcastNew.message)
-async def on_message_content(message: Message, user: User | None, state: FSMContext) -> None:
+async def on_message_content(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
     if user is None:
         return
     content = content_from_message(message)
@@ -252,13 +450,10 @@ async def on_message_content(message: Message, user: User | None, state: FSMCont
             message.bot, message.chat.id, Screen(ru.BROADCAST_UNSUPPORTED), rich_buttons=_rich(user)
         )
         return
-    await state.update_data(content=content.to_json())
+    data = await state.update_data(content=content.to_json())
     await state.set_state(BroadcastNew.buttons)
-    screen = Screen(
-        ru.BROADCAST_ASK_BUTTONS,
-        rows=[[Btn(ru.BTN_NO_BUTTONS, "bc:nobtn")], [Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)]],
-    )
-    await send(message.bot, message.chat.id, screen, rich_buttons=_rich(user))
+    await _remember(session, user, "buttons", data)
+    await send(message.bot, message.chat.id, buttons_screen(), rich_buttons=_rich(user))
 
 
 async def _comments_note(bot, session: AsyncSession, chat_ids: list[int]) -> str:
@@ -326,7 +521,7 @@ async def preview_screen(
         [Btn(ru.BTN_SEND_NOW, "bc:now", STYLE_SUCCESS)],
         [Btn(ru.BTN_SEND_AT, "bc:at")],
         [Btn(ru.BTN_SEND_RECURRING, "bc:rec")],
-        [Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)],
+        _leave_row("buttons"),
     ]
     return Screen(text, rows=rows)
 
@@ -353,6 +548,7 @@ async def _show_preview(
         has_channels=await _has_channel_target(session, list(data.get("chats", []))),
     )
     await state.set_state(BroadcastNew.schedule)
+    await _remember(session, user, "schedule", data)
     await send(bot, chat_id, screen, rich_buttons=_rich(user))
 
 
@@ -370,6 +566,7 @@ async def cb_toggle_option(
     data = await state.get_data()
     data["content"][name] = not data["content"].get(name, name == "comments")
     await state.set_data(data)
+    await _remember(session, user, "schedule", data)
     screen = await preview_screen(
         callback.bot,
         session,
@@ -391,26 +588,7 @@ async def cb_ad_label(callback: CallbackQuery, user: User | None, state: FSMCont
             current=broadcast_delivery.ad_label_of(user),
             default=broadcast_delivery.DEFAULT_AD_LABEL,
         ),
-        rows=[[Btn(ru.BTN_CANCEL, "bc:adlabel:back", STYLE_DANGER)]],
-    )
-    await respond(callback, screen, rich_buttons=_rich(user))
-
-
-@router.callback_query(BroadcastNew.ad_label, F.data == "bc:adlabel:back")
-async def cb_ad_label_back(
-    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
-) -> None:
-    if user is None:
-        await callback.answer()
-        return
-    data = await state.get_data()
-    await state.set_state(BroadcastNew.schedule)
-    screen = await preview_screen(
-        callback.bot,
-        session,
-        user,
-        data,
-        has_channels=await _has_channel_target(session, list(data.get("chats", []))),
+        rows=[_leave_row("schedule")],
     )
     await respond(callback, screen, rich_buttons=_rich(user))
 
@@ -476,7 +654,7 @@ async def _create(
 ):
     data = await state.get_data()
     await state.clear()
-    return await broadcast_service.create_broadcast(
+    broadcast = await broadcast_service.create_broadcast(
         session,
         user,
         kind=kind,
@@ -485,6 +663,10 @@ async def _create(
         tz_name=_tz(),
         **when,
     )
+    # The draft has become a real broadcast; keeping it would offer the
+    # admin to "finish" something they have already sent.
+    await broadcast_service.drop_draft(session, user)
+    return broadcast
 
 
 def _sent_screen(result: broadcast_delivery.RunResult) -> Screen:
@@ -514,10 +696,7 @@ async def cb_send_now(
 @router.callback_query(BroadcastNew.schedule, F.data == "bc:at")
 async def cb_send_at(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
     await state.set_state(BroadcastNew.datetime)
-    screen = Screen(
-        ru.BROADCAST_ASK_DATETIME.format(tz=_tz()),
-        rows=[[Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)]],
-    )
+    screen = Screen(ru.BROADCAST_ASK_DATETIME.format(tz=_tz()), rows=[_leave_row("schedule")])
     await respond(callback, screen, rich_buttons=_rich(user))
 
 
@@ -571,9 +750,7 @@ async def cb_days_next(callback: CallbackQuery, user: User | None, state: FSMCon
         await callback.answer(ru.BROADCAST_NEED_DAYS, show_alert=True)
         return
     await state.set_state(BroadcastNew.time)
-    screen = Screen(
-        ru.BROADCAST_ASK_TIME.format(tz=_tz()), rows=[[Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)]]
-    )
+    screen = Screen(ru.BROADCAST_ASK_TIME.format(tz=_tz()), rows=[_leave_row("days")])
     await respond(callback, screen, rich_buttons=_rich(user))
 
 
@@ -616,7 +793,7 @@ async def cb_list(
     if user is None:
         await callback.answer()
         return
-    await state.clear()
+    await _keep_draft(session, user, state)
     await respond(callback, await list_screen(session, user), rich_buttons=_rich(user))
 
 

@@ -359,6 +359,24 @@ class BroadcastTarget(Base):
     target_id: Mapped[int] = mapped_column(primary_key=True)
 
 
+class BroadcastDraft(Base):
+    """A half-composed broadcast, kept so that leaving the wizard — by
+    accident or on purpose — never throws away a written post. One per
+    admin: starting a new draft replaces the old one."""
+
+    __tablename__ = "broadcast_drafts"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # The BroadcastNew state to return to, and the FSM data as it was.
+    step: Mapped[str] = mapped_column(String(16))
+    data: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ApiKeyChannel(Base):
     __tablename__ = "api_key_channels"
 

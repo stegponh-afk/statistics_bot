@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
     Broadcast,
+    BroadcastDraft,
     BroadcastKind,
     BroadcastStatus,
     BroadcastTarget,
@@ -318,3 +319,29 @@ def advance_after_run(broadcast: Broadcast, now: datetime | None = None) -> None
     else:
         broadcast.next_run_at = None
         broadcast.status = BroadcastStatus.DONE.value
+
+
+# --- drafts ---------------------------------------------------------------
+
+
+async def save_draft(session: AsyncSession, owner: User, step: str, data: dict[str, Any]) -> None:
+    """Remembers where the wizard was, so a stray «Отмена» costs nothing."""
+    draft = await session.get(BroadcastDraft, owner.id)
+    if draft is None:
+        draft = BroadcastDraft(user_id=owner.id)
+        session.add(draft)
+    draft.step = step
+    draft.data = data
+    draft.updated_at = datetime.now(UTC)
+    await session.commit()
+
+
+async def load_draft(session: AsyncSession, owner: User) -> BroadcastDraft | None:
+    return await session.get(BroadcastDraft, owner.id)
+
+
+async def drop_draft(session: AsyncSession, owner: User) -> None:
+    draft = await session.get(BroadcastDraft, owner.id)
+    if draft is not None:
+        await session.delete(draft)
+        await session.commit()
