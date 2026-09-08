@@ -40,6 +40,7 @@ ALLOWED_UPDATES = [
     "chat_member",
     "channel_post",
     "message_reaction_count",
+    "chat_join_request",
 ]
 
 

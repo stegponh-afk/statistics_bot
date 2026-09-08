@@ -142,6 +142,10 @@ async def apply_bot_membership(session: AsyncSession, chat: Chat, member: ChatMe
     if not chat.bot_can_restrict:
         # Same for the captcha, which mutes the newcomer it challenges.
         chat.captcha_enabled = False
+    if not chat.bot_can_invite:
+        # Approving a join request needs "invite users"; without it every
+        # request would just pile up unanswered.
+        chat.join_gate_enabled = False
     await session.commit()
     return chat
 

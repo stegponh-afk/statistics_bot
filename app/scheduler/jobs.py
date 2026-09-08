@@ -14,6 +14,7 @@ from app.services import (
     broadcast_service,
     chat_service,
     digest_service,
+    join_request_service,
     stats_service,
 )
 from config import settings
@@ -56,7 +57,10 @@ async def job_snapshot_members(bot: Bot) -> None:
 async def job_purge_stats() -> None:
     async with async_session_factory() as session:
         events, words = await stats_service.purge_older_than(session, settings.stats_retention_days)
-    logger.info("purged %d events and %d word rows", events, words)
+        # Requests an admin answered by hand leave rows behind: Telegram
+        # sends no update for that.
+        requests = await join_request_service.purge_older_than(session)
+    logger.info("purged %d events, %d word rows, %d join requests", events, words, requests)
 
 
 async def job_run_due_broadcasts(bot: Bot) -> None:

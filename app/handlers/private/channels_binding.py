@@ -1,8 +1,10 @@
-"""Which channels a group requires, and the gate on/off switch.
+"""Which channels a chat requires, and the switches that read that list.
 
 chat:{id}:channels                       the list (✅ / ☐ per channel)
 chat:{id}:channels:toggle:{channel_id}   flip one binding
-chat:{id}:forcesub                       flip the gate
+chat:{id}:forcesub                       flip the message gate (groups)
+chat:{id}:joingate                       flip the join-request gate
+chat:{id}:comments_gate                  flip the gate in a channel's comments
 """
 
 from aiogram import F, Router
@@ -22,7 +24,8 @@ router = Router(name="channels_binding")
 
 
 async def channels_screen(session: AsyncSession, user: User, chat: Chat) -> Screen:
-    channels = await chat_service.list_admin_channels(session, user)
+    # A channel can require *other* channels, never itself.
+    channels = [c for c in await chat_service.list_admin_channels(session, user) if c.id != chat.id]
     required = {c.id for c in await forcesub_service.list_required_channels(session, chat)}
     title = chat.title or chat.telegram_id
     if not channels:
@@ -100,7 +103,11 @@ async def cb_channel_toggle(
 
     now_required = await forcesub_service.toggle_required_channel(session, cache, chat, channel)
     if not now_required and not await forcesub_service.list_required_channels(session, chat):
+        # Nothing left to require: both gates that read this list would
+        # otherwise stay "on" while letting everyone through.
         await forcesub_service.set_forcesub_enabled(session, chat, False)
+        chat.join_gate_enabled = False
+        await session.commit()
     await callback.answer(ru.CHANNEL_ADDED if now_required else ru.CHANNEL_REMOVED)
     await respond(
         callback, await channels_screen(session, user, chat), rich_buttons=user.rich_buttons_enabled
@@ -131,6 +138,40 @@ async def cb_forcesub_toggle(
             return
         await forcesub_service.set_forcesub_enabled(session, chat, True)
         await callback.answer(ru.FORCESUB_ENABLED)
+
+    screen = await render_chat_card(callback.bot, session, chat)
+    await respond(callback, screen, rich_buttons=user.rich_buttons_enabled)
+
+
+@router.callback_query(F.data.regexp(r"^chat:(\d+):joingate$"))
+async def cb_join_gate_toggle(
+    callback: CallbackQuery, session: AsyncSession, user: User | None
+) -> None:
+    """Works for groups and channels alike — nobody is let in until they
+    are subscribed, so there is nothing to delete afterwards."""
+    if user is None:
+        await callback.answer()
+        return
+    chat = await load_admin_chat(session, user, int(callback.data.split(":")[1]))
+    if chat is None:
+        await callback.answer(ru.CHAT_NOT_FOUND, show_alert=True)
+        return
+
+    if chat.join_gate_enabled:
+        chat.join_gate_enabled = False
+        await session.commit()
+        await callback.answer(ru.JOIN_GATE_DISABLED)
+    else:
+        if not await forcesub_service.list_required_channels(session, chat):
+            await callback.answer(ru.JOIN_GATE_NEED_CHANNELS, show_alert=True)
+            return
+        await chat_service.refresh_bot_membership(callback.bot, session, chat)
+        if not chat.bot_can_invite:
+            await callback.answer(ru.JOIN_GATE_NEED_INVITE_RIGHT, show_alert=True)
+            return
+        chat.join_gate_enabled = True
+        await session.commit()
+        await callback.answer(ru.JOIN_GATE_ENABLED)
 
     screen = await render_chat_card(callback.bot, session, chat)
     await respond(callback, screen, rich_buttons=user.rich_buttons_enabled)

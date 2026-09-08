@@ -98,6 +98,11 @@ class Chat(Base):
     admins_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     forcesub_enabled: Mapped[bool] = mapped_column(default=False)
+    # «Заявки на вступление»: hold every join request until the applicant is
+    # subscribed to the chat's required channels, then approve it. Unlike
+    # forcesub_enabled this also works for channels, which have no messages
+    # to delete.
+    join_gate_enabled: Mapped[bool] = mapped_column(default=False)
     stats_enabled: Mapped[bool] = mapped_column(default=True)
     # IANA name; NULL = settings.default_timezone.
     timezone: Mapped[str | None] = mapped_column(String(48))
@@ -152,6 +157,26 @@ class ChatAdmin(Base):
     )
     is_anonymous: Mapped[bool] = mapped_column(default=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JoinRequest(Base):
+    """A join request the bot is holding until the applicant subscribes to
+    the chat's required channels."""
+
+    __tablename__ = "join_requests"
+    __table_args__ = (Index("ix_join_requests_user", "user_tg_id"),)
+
+    chat_id: Mapped[int] = mapped_column(
+        ForeignKey("chats.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # The private chat Telegram opens for this request. Writable for five
+    # minutes even if the applicant never started the bot — which is the
+    # only reason the bot can explain itself to a stranger at all.
+    user_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class GroupRequiredChannel(Base):

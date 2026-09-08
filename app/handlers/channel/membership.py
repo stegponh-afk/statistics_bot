@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cache import Cache
 from app.database.models import Chat, User
 from app.filters.chat_type import CHANNEL
-from app.services import channel_stats, chat_service
+from app.services import channel_stats, chat_service, join_request_service
 from app.services.subscription_checker import member_cache_key
 from config import settings
 
@@ -66,6 +66,13 @@ async def on_subscriber_changed(
         ttl=settings.forcesub_cache_ttl_seconds,
     )
     was_in = _is_in(event.old_chat_member)
+    if subscribed and not was_in and not member.user.is_bot:
+        # They may be waiting at the door of a chat that requires exactly
+        # this channel — let them in without making them press anything.
+        # force=False: the line above just cached this very membership.
+        await join_request_service.recheck_all(
+            event.bot, session, cache, member.user.id, force=False
+        )
     if chat_row is not None and was_in != subscribed and not member.user.is_bot:
         await channel_stats.record_member_event(
             session,

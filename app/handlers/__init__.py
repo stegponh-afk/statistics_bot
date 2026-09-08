@@ -6,6 +6,7 @@ from aiogram import Router
 
 from app.cache import Cache
 from app.filters.chat_type import CB_GROUP, CB_PRIVATE, CHANNEL, GROUP, PRIVATE
+from app.handlers import join_requests
 from app.handlers.channel import membership as channel_membership
 from app.handlers.group import commands as group_commands
 from app.handlers.group import gate_callbacks as group_gate
@@ -20,6 +21,7 @@ from app.handlers.private import (
     channels_binding,
     chat_panel,
     digest,
+    join_check,
     my_chats,
     reward,
     settings,
@@ -45,6 +47,7 @@ def build_router(cache: Cache) -> Router:
     private_router.include_router(chat_panel.router)
     private_router.include_router(channels_binding.router)
     private_router.include_router(channel_check.router)
+    private_router.include_router(join_check.router)
     private_router.include_router(reward.router)
     private_router.include_router(welcome.router)
     private_router.include_router(digest.router)
@@ -74,6 +77,9 @@ def build_router(cache: Cache) -> Router:
     channel_router.channel_post.outer_middleware(StatsLogMiddleware())
     channel_router.include_router(channel_membership.router)
 
+    # chat_join_request arrives for groups and channels alike, so it is
+    # handled above the per-chat-kind routers.
+    root.include_router(join_requests.router)
     root.include_router(private_router)
     root.include_router(group_router)
     root.include_router(channel_router)

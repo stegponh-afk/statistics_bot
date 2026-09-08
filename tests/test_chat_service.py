@@ -83,24 +83,32 @@ async def test_bot_membership_fields_and_gate_auto_off(session):
     chat = await chat_service.upsert_chat(session, _tg_chat())
     chat.forcesub_enabled = True
     chat.captcha_enabled = True
+    chat.join_gate_enabled = True
     await chat_service.apply_bot_membership(
         session,
         chat,
-        _admin(999, is_bot=True, can_delete_messages=True, can_restrict_members=True),
+        _admin(
+            999,
+            is_bot=True,
+            can_delete_messages=True,
+            can_restrict_members=True,
+            can_invite_users=True,
+        ),
     )
     assert chat.bot_status == BotStatus.ADMINISTRATOR and chat.bot_can_delete
-    assert chat.bot_can_restrict
-    assert chat.forcesub_enabled and chat.captcha_enabled
+    assert chat.bot_can_restrict and chat.bot_can_invite
+    assert chat.forcesub_enabled and chat.captcha_enabled and chat.join_gate_enabled
 
-    # Demoted to a plain member: both features that need rights switch off
-    # rather than silently doing nothing.
+    # Demoted to a plain member: every feature that needs a right switches
+    # off rather than silently doing nothing.
     await chat_service.apply_bot_membership(
         session, chat, ChatMemberMember(user=tg_user(999, is_bot=True))
     )
     assert chat.bot_status == BotStatus.MEMBER and not chat.bot_can_delete
-    assert chat.bot_can_restrict is False
+    assert chat.bot_can_restrict is False and chat.bot_can_invite is False
     assert chat.forcesub_enabled is False
     assert chat.captcha_enabled is False
+    assert chat.join_gate_enabled is False
 
 
 async def test_list_admin_chats_only_where_bot_is_present(session, bot: FakeBot):

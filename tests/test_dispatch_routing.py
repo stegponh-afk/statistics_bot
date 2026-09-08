@@ -48,7 +48,9 @@ class CacheProxy:
         return getattr(_STATE["cache"], name)
 
 
-def _admin_member(user_id: int, *, is_bot: bool = False) -> ChatMemberAdministrator:
+def _admin_member(
+    user_id: int, *, is_bot: bool = False, **granted: bool
+) -> ChatMemberAdministrator:
     rights = {
         name: False
         for name in (
@@ -67,6 +69,7 @@ def _admin_member(user_id: int, *, is_bot: bool = False) -> ChatMemberAdministra
             "can_send_welcome_messages",
         )
     }
+    rights.update(granted)
     return ChatMemberAdministrator(user=tg_user(user_id, "X", is_bot=is_bot), **rights)
 
 
@@ -242,3 +245,69 @@ async def test_newcomer_is_challenged_then_greeted(session, cache, bot: FakeBot)
     assert bot.restrictions[-1][2].can_send_messages is True
     edited = bot.calls_named("edit_ephemeral_message_text")[-1]
     assert "Привет, Аня!" in str(edited["rich_message"].blocks)
+
+
+async def test_join_request_is_held_then_approved_when_the_channel_is_joined(
+    session, cache, bot: FakeBot
+):
+    """The applicant never has to press anything: subscribing to the
+    required channel is what lets them in."""
+    from aiogram.types import Chat as TgChat
+    from aiogram.types import ChatMemberLeft, ChatMemberMember
+
+    from app.database.models import JoinRequest
+    from app.services import chat_service, forcesub_service
+
+    group_id, channel_id, applicant, user_chat = -100_60, -100_61, 88, 9_000_000_088
+    group = await chat_service.upsert_chat(
+        session, TgChat(id=group_id, type="supergroup", title="Клуб")
+    )
+    group.bot_status = BotStatus.ADMINISTRATOR
+    group.bot_can_invite = True
+    group.join_gate_enabled = True
+    required = await chat_service.upsert_chat(
+        session, TgChat(id=channel_id, type="channel", title="Канал", username="need")
+    )
+    required.bot_status = BotStatus.ADMINISTRATOR
+    await session.commit()
+    await forcesub_service.toggle_required_channel(session, cache, group, required)
+
+    bot.members[(channel_id, applicant)] = ChatMemberLeft(user=tg_user(applicant))
+    # The context middleware re-reads the bot's own rights on this update.
+    bot.members[(group_id, bot.id)] = _admin_member(bot.id, is_bot=True, can_invite_users=True)
+    dp = _dispatcher(session, cache)
+    request = Update.model_validate(
+        {
+            "update_id": 30,
+            "chat_join_request": {
+                "chat": {"id": group_id, "type": "supergroup", "title": "Клуб"},
+                "from": tg_user(applicant, "Гость").model_dump(),
+                "user_chat_id": user_chat,
+                "date": int(datetime.now(UTC).timestamp()),
+            },
+        },
+        context={"bot": bot},
+    )
+    assert await dp.feed_update(bot, request) is not UNHANDLED
+    assert not bot.calls_named("approve_chat_join_request")
+    assert await session.scalar(select(JoinRequest)) is not None
+    assert bot.calls_named("send_rich_message")[-1]["chat_id"] == user_chat
+
+    joined = Update.model_validate(
+        {
+            "update_id": 31,
+            "chat_member": {
+                "chat": {"id": channel_id, "type": "channel", "title": "Канал"},
+                "from": tg_user(applicant, "Гость").model_dump(),
+                "date": int(datetime.now(UTC).timestamp()),
+                "old_chat_member": ChatMemberLeft(user=tg_user(applicant)).model_dump(),
+                "new_chat_member": ChatMemberMember(user=tg_user(applicant)).model_dump(),
+            },
+        },
+        context={"bot": bot},
+    )
+    await dp.feed_update(bot, joined)
+    assert bot.calls_named("approve_chat_join_request") == [
+        {"chat_id": group_id, "user_id": applicant}
+    ]
+    assert await session.scalar(select(JoinRequest)) is None

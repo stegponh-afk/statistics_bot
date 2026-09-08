@@ -72,6 +72,11 @@ def _bot_status_line(chat: Chat) -> str:
     return ru.CHAT_BOT_GONE
 
 
+def _join_gate_button(chat: Chat) -> Btn:
+    label = ru.BTN_CHAT_JOINGATE_ON if chat.join_gate_enabled else ru.BTN_CHAT_JOINGATE_OFF
+    return Btn(label, f"chat:{chat.id}:joingate")
+
+
 def chat_card_screen(
     chat: Chat,
     *,
@@ -112,7 +117,13 @@ def chat_card_screen(
                 )
             ]
         )
-        rows.append([Btn(ru.BTN_CHAT_DIGEST, f"chat:{chat.id}:digest")])
+        rows.append(
+            [
+                Btn(ru.BTN_CHAT_CHANNELS.format(count=channels_count), f"chat:{chat.id}:channels"),
+                Btn(ru.BTN_CHAT_DIGEST, f"chat:{chat.id}:digest"),
+            ]
+        )
+        rows.append([_join_gate_button(chat)])
     else:
         rows.append(
             [
@@ -131,6 +142,7 @@ def chat_card_screen(
                 ),
             ]
         )
+        rows.append([_join_gate_button(chat)])
         rows.append(
             [
                 Btn(ru.BTN_CHAT_WELCOME, f"chat:{chat.id}:welcome"),
