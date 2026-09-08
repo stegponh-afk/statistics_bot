@@ -24,6 +24,17 @@ def test_all_referenced_strings_exist():
     assert not missing, sorted(missing)
 
 
+def test_every_constant_is_a_string():
+    """A stray trailing comma turns a screen into a one-element tuple, and
+    the failure surfaces as garbled output on that screen only."""
+    wrong = {
+        name: type(getattr(ru, name)).__name__
+        for name in dir(ru)
+        if name.isupper() and not isinstance(getattr(ru, name), str | dict)
+    }
+    assert not wrong, wrong
+
+
 def test_alert_texts_fit_in_a_popup():
     too_long = {}
     for path in Path("app").rglob("*.py"):
