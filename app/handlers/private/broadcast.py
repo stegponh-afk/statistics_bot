@@ -261,7 +261,7 @@ async def on_message_content(message: Message, user: User | None, state: FSMCont
 async def _show_preview(chat_id: int, bot, user: User, state: FSMContext) -> None:
     data = await state.get_data()
     content = Content.from_json(data["content"])
-    await broadcast_delivery._send(bot, chat_id, content, content.file_id)
+    await broadcast_delivery.send_content(bot, chat_id, content, content.file_id)
     targets = len(data.get("chats", []))
     screen = Screen(
         ru.BROADCAST_PREVIEW_HINT.format(targets=targets),
@@ -476,7 +476,9 @@ async def cb_preview(callback: CallbackQuery, session: AsyncSession, user: User 
     if b is None:
         return
     content = Content.from_json(b.content)
-    await broadcast_delivery._send(callback.bot, callback.message.chat.id, content, content.file_id)
+    await broadcast_delivery.send_content(
+        callback.bot, callback.message.chat.id, content, content.file_id
+    )
     await callback.answer()
     await send(
         callback.bot,

@@ -147,7 +147,9 @@ async def cb_reward_show(callback: CallbackQuery, session: AsyncSession, user: U
     if content is None:
         await callback.answer(ru.REWARD_NEED_CONTENT, show_alert=True)
         return
-    await broadcast_delivery._send(callback.bot, callback.message.chat.id, content, content.file_id)
+    await broadcast_delivery.send_content(
+        callback.bot, callback.message.chat.id, content, content.file_id
+    )
     await callback.answer()
 
 
@@ -230,7 +232,9 @@ async def on_reward_post(
     link = await reward_service.deep_link(bot=message.bot, channel=channel)
     content.buttons = [[{"text": ru.REWARD_POST_BUTTON, "url": link}]]
     try:
-        await broadcast_delivery._send(message.bot, channel.telegram_id, content, content.file_id)
+        await broadcast_delivery.send_content(
+            message.bot, channel.telegram_id, content, content.file_id
+        )
         await message.answer(ru.REWARD_POSTED)
     except (TelegramBadRequest, TelegramForbiddenError):
         await message.answer(ru.REWARD_POST_FAILED)

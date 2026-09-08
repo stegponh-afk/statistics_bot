@@ -11,6 +11,7 @@ from app.handlers.group import commands as group_commands
 from app.handlers.group import gate_callbacks as group_gate
 from app.handlers.group import membership as group_membership
 from app.handlers.group import stats_callbacks as group_stats
+from app.handlers.group import welcome as group_welcome
 from app.handlers.private import (
     admin,
     bots,
@@ -18,11 +19,13 @@ from app.handlers.private import (
     channel_check,
     channels_binding,
     chat_panel,
+    digest,
     my_chats,
     reward,
     settings,
     start,
     subscribe,
+    welcome,
     whitelist,
 )
 from app.handlers.private import help as private_help
@@ -43,6 +46,8 @@ def build_router(cache: Cache) -> Router:
     private_router.include_router(channels_binding.router)
     private_router.include_router(channel_check.router)
     private_router.include_router(reward.router)
+    private_router.include_router(welcome.router)
+    private_router.include_router(digest.router)
     private_router.include_router(whitelist.router)
     private_router.include_router(bots.router)
     private_router.include_router(broadcast.router)
@@ -62,6 +67,7 @@ def build_router(cache: Cache) -> Router:
     group_router.include_router(group_commands.router)
     group_router.include_router(group_stats.router)
     group_router.include_router(group_gate.router)
+    group_router.include_router(group_welcome.router)
 
     channel_router = Router(name="channel")
     channel_router.channel_post.filter(CHANNEL)

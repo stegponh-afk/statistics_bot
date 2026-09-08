@@ -48,7 +48,7 @@ async def _deliver(bot, session: AsyncSession, chat_id: int, channel: Chat, user
     await send(bot, chat_id, Screen(ru.SUB_OK), rich_buttons=_rich(user))
     content = reward_service.reward_of(channel)
     if content is not None:
-        await broadcast_delivery._send(bot, chat_id, content, content.file_id)
+        await broadcast_delivery.send_content(bot, chat_id, content, content.file_id)
 
 
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith(DEEP_LINK_PREFIX)))

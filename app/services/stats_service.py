@@ -134,6 +134,36 @@ async def overview(session: AsyncSession, chat_tg_id: int, today: date) -> Overv
     return Overview(today=int(row[0]), week=int(row[1]), month=int(row[2]), active_week=int(row[3]))
 
 
+async def messages_count(
+    session: AsyncSession, chat_tg_id: int, day_from: date, day_to: date
+) -> int:
+    """Messages (for a channel: posts) recorded in the inclusive range."""
+    return int(
+        await session.scalar(
+            select(func.count()).where(
+                MessageEvent.chat_tg_id == chat_tg_id,
+                MessageEvent.local_day >= day_from,
+                MessageEvent.local_day <= day_to,
+            )
+        )
+        or 0
+    )
+
+
+async def active_users(session: AsyncSession, chat_tg_id: int, day_from: date, day_to: date) -> int:
+    return int(
+        await session.scalar(
+            select(func.count(func.distinct(MessageEvent.user_tg_id))).where(
+                MessageEvent.chat_tg_id == chat_tg_id,
+                MessageEvent.user_tg_id.is_not(None),
+                MessageEvent.local_day >= day_from,
+                MessageEvent.local_day <= day_to,
+            )
+        )
+        or 0
+    )
+
+
 async def top_users(
     session: AsyncSession, chat_tg_id: int, day_from: date, day_to: date, limit: int = 5
 ) -> list[tuple[int, int]]:

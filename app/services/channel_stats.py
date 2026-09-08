@@ -13,6 +13,7 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Chat, MemberEvent, MemberSnapshot, MessageEvent, PostReaction
+from app.services import stats_service
 from app.utils import localize
 
 JOIN = "join"
@@ -117,16 +118,7 @@ async def count_on_or_before(session: AsyncSession, chat_tg_id: int, day: date) 
 
 
 async def posts_count(session: AsyncSession, chat_tg_id: int, day_from: date, day_to: date) -> int:
-    return int(
-        await session.scalar(
-            select(func.count()).where(
-                MessageEvent.chat_tg_id == chat_tg_id,
-                MessageEvent.local_day >= day_from,
-                MessageEvent.local_day <= day_to,
-            )
-        )
-        or 0
-    )
+    return await stats_service.messages_count(session, chat_tg_id, day_from, day_to)
 
 
 @dataclass(frozen=True)
@@ -142,16 +134,7 @@ async def reactions(
 ) -> ReactionStats:
     """Reaction totals over posts published in the window (posts without
     any reaction count as 0 in the average)."""
-    posts = int(
-        await session.scalar(
-            select(func.count()).where(
-                MessageEvent.chat_tg_id == chat_tg_id,
-                MessageEvent.local_day >= day_from,
-                MessageEvent.local_day <= day_to,
-            )
-        )
-        or 0
-    )
+    posts = await posts_count(session, chat_tg_id, day_from, day_to)
     rows = (
         await session.execute(
             select(PostReaction.message_id, PostReaction.total)

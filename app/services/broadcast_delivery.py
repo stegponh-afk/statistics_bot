@@ -12,7 +12,7 @@ from aiogram.exceptions import (
     TelegramNotFound,
     TelegramRetryAfter,
 )
-from aiogram.types import Message
+from aiogram.types import EphemeralMessageParameters, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Broadcast, Chat
@@ -28,10 +28,25 @@ class RunResult:
     failed: int = 0
 
 
-async def _send(bot: Bot, chat_id: int, content: Content, media) -> Message:
+async def send_content(
+    bot: Bot,
+    chat_id: int,
+    content: Content,
+    media=None,
+    *,
+    ephemeral: EphemeralMessageParameters | None = None,
+    thread_id: int | None = None,
+) -> Message:
+    """Re-sends a stored message (broadcast, reward, welcome). With
+    `ephemeral` it goes out visible to that one user only."""
     # parse_mode is passed explicitly either way: our own bot defaults to
     # HTML, which must not apply to text that carries entities.
-    kwargs = dict(reply_markup=content.reply_markup(), parse_mode=content.parse_mode)
+    kwargs = dict(
+        reply_markup=content.reply_markup(),
+        parse_mode=content.parse_mode,
+        ephemeral_message_parameters=ephemeral,
+        message_thread_id=thread_id,
+    )
     if content.type == "text":
         return await bot.send_message(
             chat_id, content.text or "", entities=content.message_entities(), **kwargs
@@ -51,10 +66,10 @@ async def _send(bot: Bot, chat_id: int, content: Content, media) -> Message:
 async def _send_with_retry(bot: Bot, chat_id: int, content: Content, media) -> Message:
     for _ in range(3):
         try:
-            return await _send(bot, chat_id, content, media)
+            return await send_content(bot, chat_id, content, media)
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
-    return await _send(bot, chat_id, content, media)
+    return await send_content(bot, chat_id, content, media)
 
 
 async def deliver_to_chats(bot: Bot, chats: list[Chat], content: Content) -> RunResult:

@@ -112,6 +112,7 @@ def chat_card_screen(
                 )
             ]
         )
+        rows.append([Btn(ru.BTN_CHAT_DIGEST, f"chat:{chat.id}:digest")])
     else:
         rows.append(
             [
@@ -128,6 +129,12 @@ def chat_card_screen(
                     ru.BTN_CHAT_WHITELIST.format(count=whitelist_count),
                     f"chat:{chat.id}:whitelist",
                 ),
+            ]
+        )
+        rows.append(
+            [
+                Btn(ru.BTN_CHAT_WELCOME, f"chat:{chat.id}:welcome"),
+                Btn(ru.BTN_CHAT_DIGEST, f"chat:{chat.id}:digest"),
             ]
         )
     rows.append([Btn(ru.BTN_REFRESH, f"chat:{chat.id}:refresh")])

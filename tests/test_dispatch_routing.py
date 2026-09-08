@@ -179,3 +179,66 @@ async def test_reward_deep_link_flow(session, cache, bot: FakeBot):
     assert bot.calls_named("send_message")[-1]["text"] == "секрет"  # unchanged
     last_screen = bot.calls_named("send_rich_message")[-1]["rich_message"]
     assert "уже получена" in str(last_screen.blocks)
+
+
+async def test_newcomer_is_challenged_then_greeted(session, cache, bot: FakeBot):
+    """join -> muted + ephemeral captcha -> «Я не бот» -> unmuted + greeting."""
+    from aiogram.types import Chat as TgChat
+    from aiogram.types import ChatMemberLeft, ChatMemberMember
+
+    from app.services import chat_service
+    from app.services.broadcast_service import Content
+    from tests.fakes import make_callback
+
+    group_id, newcomer = -100_50, 77
+    group = await chat_service.upsert_chat(
+        session, TgChat(id=group_id, type="supergroup", title="Клуб")
+    )
+    group.bot_status = BotStatus.ADMINISTRATOR
+    group.bot_can_restrict = True
+    group.captcha_enabled = True
+    group.welcome_enabled = True
+    group.welcome_content = Content(type="text", text="Привет, {name}!").to_json()
+    await session.commit()
+
+    dp = _dispatcher(session, cache)
+    join = Update.model_validate(
+        {
+            "update_id": 20,
+            "chat_member": {
+                "chat": {"id": group_id, "type": "supergroup", "title": "Клуб"},
+                "from": tg_user(newcomer, "Аня").model_dump(),
+                "date": int(datetime.now(UTC).timestamp()),
+                "old_chat_member": ChatMemberLeft(user=tg_user(newcomer, "Аня")).model_dump(),
+                "new_chat_member": ChatMemberMember(user=tg_user(newcomer, "Аня")).model_dump(),
+            },
+        },
+        context={"bot": bot},
+    )
+    assert await dp.feed_update(bot, join) is not UNHANDLED
+    assert bot.restrictions[-1][2].can_send_messages is False
+    challenge = bot.calls_named("send_rich_message")[-1]
+    assert challenge["ephemeral_message_parameters"].receiver_user_id == newcomer
+
+    prompt = make_message(
+        chat_id=group_id,
+        chat_type="supergroup",
+        user_id=bot.id,
+        from_bot=True,
+        text=None,
+        ephemeral_message_id=7,
+        bot=bot,
+    )
+    press = Update.model_validate(
+        {
+            "update_id": 21,
+            "callback_query": make_callback(
+                prompt, f"wc:ok:{group_id}", user_id=newcomer, bot=bot
+            ).model_dump(exclude_none=True),
+        },
+        context={"bot": bot},
+    )
+    assert await dp.feed_update(bot, press) is not UNHANDLED
+    assert bot.restrictions[-1][2].can_send_messages is True
+    edited = bot.calls_named("edit_ephemeral_message_text")[-1]
+    assert "Привет, Аня!" in str(edited["rich_message"].blocks)

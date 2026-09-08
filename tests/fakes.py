@@ -41,13 +41,16 @@ class FakeBot:
         self.linked_chats: dict[int, int] = {}
         # method name -> Exception to raise on the next call of that method
         self.fail_next: dict[str, Exception] = {}
+        # ... and on every call, for "Telegram keeps refusing this" cases
+        self.fail_always: dict[str, Exception] = {}
+        self.restrictions: list[tuple[int, int, Any]] = []
         self._message_id = 100
 
     def _record(self, name: str, **kwargs: Any) -> None:
         self.calls.append((name, kwargs))
 
     def _maybe_fail(self, name: str) -> None:
-        exc = self.fail_next.pop(name, None)
+        exc = self.fail_next.pop(name, None) or self.fail_always.get(name)
         if exc is not None:
             raise exc
 
@@ -110,6 +113,12 @@ class FakeBot:
                 "linked_chat_id": self.linked_chats.get(chat_id),
             }
         )
+
+    async def restrict_chat_member(self, chat_id: int, user_id: int, **kwargs: Any) -> bool:
+        self._record("restrict_chat_member", chat_id=chat_id, user_id=user_id, **kwargs)
+        self._maybe_fail("restrict_chat_member")
+        self.restrictions.append((chat_id, user_id, kwargs.get("permissions")))
+        return True
 
     async def export_chat_invite_link(self, chat_id: int) -> str:
         self._record("export_chat_invite_link", chat_id=chat_id)

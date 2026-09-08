@@ -9,7 +9,13 @@ from sqlalchemy import select
 from app.cache import Cache
 from app.database.models import BotStatus, Chat
 from app.database.session import async_session_factory
-from app.services import broadcast_delivery, broadcast_service, chat_service, stats_service
+from app.services import (
+    broadcast_delivery,
+    broadcast_service,
+    chat_service,
+    digest_service,
+    stats_service,
+)
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -65,6 +71,16 @@ async def job_run_due_broadcasts(bot: Bot) -> None:
                 await session.commit()
 
 
+async def job_send_digests(bot: Bot) -> None:
+    """Every few minutes: chats whose local report time has come today."""
+    async with async_session_factory() as session:
+        for chat in await digest_service.due_chats(session):
+            try:
+                await digest_service.send_digest(bot, session, chat)
+            except Exception:  # noqa: BLE001 — one chat must not stop the sweep
+                logger.exception("digest for %s failed", chat.telegram_id)
+
+
 def setup_scheduler(bot: Bot, cache: Cache) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(
@@ -79,6 +95,14 @@ def setup_scheduler(bot: Bot, cache: Cache) -> AsyncIOScheduler:
         IntervalTrigger(seconds=30),
         args=[bot],
         id="run_broadcasts",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        job_send_digests,
+        IntervalTrigger(minutes=5),
+        args=[bot],
+        id="send_digests",
         max_instances=1,
         coalesce=True,
     )

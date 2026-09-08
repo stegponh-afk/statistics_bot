@@ -112,14 +112,24 @@ def bot_membership_fields(member: ChatMember) -> dict:
             "bot_status": BotStatus.ADMINISTRATOR,
             "bot_can_delete": bool(member.can_delete_messages),
             "bot_can_invite": bool(member.can_invite_users),
+            "bot_can_restrict": bool(member.can_restrict_members),
         }
     if status == ChatMemberStatus.MEMBER or (
         status == ChatMemberStatus.RESTRICTED and getattr(member, "is_member", False)
     ):
-        return {"bot_status": BotStatus.MEMBER, "bot_can_delete": False, "bot_can_invite": False}
+        return _no_rights(BotStatus.MEMBER)
     if status == ChatMemberStatus.KICKED:
-        return {"bot_status": BotStatus.KICKED, "bot_can_delete": False, "bot_can_invite": False}
-    return {"bot_status": BotStatus.LEFT, "bot_can_delete": False, "bot_can_invite": False}
+        return _no_rights(BotStatus.KICKED)
+    return _no_rights(BotStatus.LEFT)
+
+
+def _no_rights(status: BotStatus) -> dict:
+    return {
+        "bot_status": status,
+        "bot_can_delete": False,
+        "bot_can_invite": False,
+        "bot_can_restrict": False,
+    }
 
 
 async def apply_bot_membership(session: AsyncSession, chat: Chat, member: ChatMember) -> Chat:
@@ -129,6 +139,9 @@ async def apply_bot_membership(session: AsyncSession, chat: Chat, member: ChatMe
         # The gate deletes messages; without that right (or in the chat at
         # all) it can't work — don't leave it "on".
         chat.forcesub_enabled = False
+    if not chat.bot_can_restrict:
+        # Same for the captcha, which mutes the newcomer it challenges.
+        chat.captcha_enabled = False
     await session.commit()
     return chat
 

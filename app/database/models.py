@@ -90,6 +90,8 @@ class Chat(Base):
     )
     bot_can_delete: Mapped[bool] = mapped_column(default=False)
     bot_can_invite: Mapped[bool] = mapped_column(default=False)
+    # "Ограничивать участников" — the captcha mutes a newcomer with it.
+    bot_can_restrict: Mapped[bool] = mapped_column(default=False)
 
     member_count: Mapped[int | None] = mapped_column()
     member_count_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -99,6 +101,24 @@ class Chat(Base):
     stats_enabled: Mapped[bool] = mapped_column(default=True)
     # IANA name; NULL = settings.default_timezone.
     timezone: Mapped[str | None] = mapped_column(String(48))
+
+    # «Приветствие» (groups): what a newcomer gets, and the anti-spam
+    # captcha that mutes them until they prove they are human.
+    welcome_enabled: Mapped[bool] = mapped_column(default=False)
+    # A broadcast_service.Content, whose text may use {name} and {title}.
+    welcome_content: Mapped[dict | None] = mapped_column(JSON)
+    # True: only the newcomer sees the greeting (ephemeral, the chat stays
+    # clean); False: a normal message everyone sees.
+    welcome_ephemeral: Mapped[bool] = mapped_column(default=True)
+    captcha_enabled: Mapped[bool] = mapped_column(default=False)
+
+    # Digest of the chat's numbers, DMed to its admins.
+    digest_enabled: Mapped[bool] = mapped_column(default=False)
+    digest_period: Mapped[str] = mapped_column(String(8), default="daily")  # daily | weekly
+    digest_time: Mapped[str] = mapped_column(String(5), default="10:00")  # local "HH:MM"
+    # The local day a digest was last sent for — the guard against sending
+    # the same report twice when the job runs every few minutes.
+    digest_last_day: Mapped[date | None] = mapped_column(Date)
 
     added_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 

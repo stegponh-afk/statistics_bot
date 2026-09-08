@@ -82,17 +82,25 @@ async def test_admin_ids_are_cached(session, bot: FakeBot, cache):
 async def test_bot_membership_fields_and_gate_auto_off(session):
     chat = await chat_service.upsert_chat(session, _tg_chat())
     chat.forcesub_enabled = True
+    chat.captcha_enabled = True
     await chat_service.apply_bot_membership(
-        session, chat, _admin(999, is_bot=True, can_delete_messages=True)
+        session,
+        chat,
+        _admin(999, is_bot=True, can_delete_messages=True, can_restrict_members=True),
     )
     assert chat.bot_status == BotStatus.ADMINISTRATOR and chat.bot_can_delete
-    assert chat.forcesub_enabled
+    assert chat.bot_can_restrict
+    assert chat.forcesub_enabled and chat.captcha_enabled
 
+    # Demoted to a plain member: both features that need rights switch off
+    # rather than silently doing nothing.
     await chat_service.apply_bot_membership(
         session, chat, ChatMemberMember(user=tg_user(999, is_bot=True))
     )
     assert chat.bot_status == BotStatus.MEMBER and not chat.bot_can_delete
+    assert chat.bot_can_restrict is False
     assert chat.forcesub_enabled is False
+    assert chat.captcha_enabled is False
 
 
 async def test_list_admin_chats_only_where_bot_is_present(session, bot: FakeBot):

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cache import Cache
 from app.database.models import User
 from app.filters.chat_type import GROUP
-from app.services import channel_stats, chat_service
+from app.services import channel_stats, chat_service, welcome_service
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,9 @@ async def on_member_admin_changed(
 
 @router.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
 @router.chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
-async def on_member_joined_or_left(event: ChatMemberUpdated, session: AsyncSession) -> None:
+async def on_member_joined_or_left(
+    event: ChatMemberUpdated, session: AsyncSession, cache: Cache
+) -> None:
     chat = await chat_service.get_chat_by_telegram_id(session, event.chat.id)
     if chat is None:
         return
@@ -59,14 +61,17 @@ async def on_member_joined_or_left(event: ChatMemberUpdated, session: AsyncSessi
         ChatMemberStatus.ADMINISTRATOR,
         ChatMemberStatus.CREATOR,
     )
-    if not event.new_chat_member.user.is_bot:
+    newcomer = event.new_chat_member.user
+    if not newcomer.is_bot:
         await channel_stats.record_member_event(
             session,
             chat,
-            event.new_chat_member.user.id,
+            newcomer.id,
             channel_stats.JOIN if joined else channel_stats.LEAVE,
             event.date,
         )
+        if joined:
+            await welcome_service.on_join(event.bot, cache, chat, newcomer.id, newcomer.full_name)
     if chat.member_count is None:
         return
     delta = 1 if joined else -1
