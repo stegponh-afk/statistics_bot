@@ -4,7 +4,7 @@ from aiogram.types import Chat as TgChat
 from sqlalchemy import func, select
 
 from app.database.models import MessageEvent, WordStatDaily
-from app.handlers.stats_screens import hour_rows
+from app.screens.stats import hour_rows
 from app.services import chat_service, stats_service
 from tests.fakes import make_message
 

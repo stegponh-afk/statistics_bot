@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Chat, User
-from app.handlers.stats_screens import TABS, stats_screen
+from app.screens.stats import TABS, stats_screen
 from app.texts import ru
 from app.ui import respond
 

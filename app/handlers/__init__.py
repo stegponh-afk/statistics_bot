@@ -8,10 +8,12 @@ from app.cache import Cache
 from app.filters.chat_type import CB_GROUP, CB_PRIVATE, CHANNEL, GROUP, PRIVATE
 from app.handlers.channel import membership as channel_membership
 from app.handlers.group import commands as group_commands
+from app.handlers.group import gate_callbacks as group_gate
 from app.handlers.group import membership as group_membership
 from app.handlers.group import stats_callbacks as group_stats
-from app.handlers.private import chat_panel, my_chats, settings, start
+from app.handlers.private import channels_binding, chat_panel, my_chats, settings, start, whitelist
 from app.handlers.private import help as private_help
+from app.middlewares.gate import ForceSubGateMiddleware
 from app.middlewares.stats_log import StatsLogMiddleware
 
 
@@ -24,6 +26,8 @@ def build_router(cache: Cache) -> Router:
     private_router.include_router(start.router)
     private_router.include_router(my_chats.router)
     private_router.include_router(chat_panel.router)
+    private_router.include_router(channels_binding.router)
+    private_router.include_router(whitelist.router)
     private_router.include_router(settings.router)
     private_router.include_router(private_help.router)
 
@@ -31,11 +35,14 @@ def build_router(cache: Cache) -> Router:
     group_router.message.filter(GROUP)
     group_router.callback_query.filter(CB_GROUP)
     # Outer middlewares run before any handler filter, for every message
-    # that reaches this router — first registered runs first.
+    # that reaches this router — first registered runs first, so the gate
+    # can swallow a message before it is ever logged.
+    group_router.message.outer_middleware(ForceSubGateMiddleware(cache))
     group_router.message.outer_middleware(StatsLogMiddleware())
     group_router.include_router(group_membership.router)
     group_router.include_router(group_commands.router)
     group_router.include_router(group_stats.router)
+    group_router.include_router(group_gate.router)
 
     channel_router = Router(name="channel")
     channel_router.channel_post.filter(CHANNEL)

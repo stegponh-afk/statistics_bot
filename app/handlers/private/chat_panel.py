@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
 from app.handlers.private.my_chats import load_admin_chat
-from app.handlers.stats_screens import TABS, stats_screen
+from app.screens.stats import TABS, stats_screen
 from app.texts import ru
 from app.ui import Btn, respond
 
