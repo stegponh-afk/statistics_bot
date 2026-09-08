@@ -160,6 +160,18 @@ class ChatWhitelist(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class RewardClaim(Base):
+    """A user already received the channel's «награда за подписку»."""
+
+    __tablename__ = "reward_claims"
+
+    chat_id: Mapped[int] = mapped_column(
+        ForeignKey("chats.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
 

@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Chat, User
 from app.services import broadcast_delivery, chat_service, reward_service
+from app.services.broadcast_service import format_local
 from app.services.reward_service import DEEP_LINK_PREFIX
 from app.services.subscription_checker import member_status
 from app.services.user_service import upsert_user
 from app.texts import ru
-from app.ui import Btn, Screen, respond, send
+from app.ui import Btn, Screen, send
 from app.ui.buttons import STYLE_PRIMARY, STYLE_SUCCESS
+from config import settings
 
 router = Router(name="subscribe")
 
@@ -35,7 +37,14 @@ async def _prompt_screen(bot, session: AsyncSession, channel: Chat) -> Screen:
     )
 
 
-async def _deliver(bot, chat_id: int, channel: Chat, user: User) -> None:
+async def _deliver(bot, session: AsyncSession, chat_id: int, channel: Chat, user: User) -> None:
+    """Hands out the reward once per user; a repeat visit only gets a
+    reminder of when it was received."""
+    earlier = await reward_service.claim(session, channel, user.telegram_id)
+    if earlier is not None:
+        when = format_local(earlier.claimed_at, settings.default_timezone)
+        await send(bot, chat_id, Screen(ru.SUB_ALREADY.format(when=when)), rich_buttons=_rich(user))
+        return
     await send(bot, chat_id, Screen(ru.SUB_OK), rich_buttons=_rich(user))
     content = reward_service.reward_of(channel)
     if content is not None:
@@ -61,7 +70,7 @@ async def start_with_reward_link(
         )
         return
     if status[0]:
-        await _deliver(message.bot, message.chat.id, channel, user)
+        await _deliver(message.bot, session, message.chat.id, channel, user)
         return
     await send(
         message.bot,
@@ -88,9 +97,4 @@ async def cb_sub_check(callback: CallbackQuery, session: AsyncSession, user: Use
     await callback.answer()
     if user is None:
         user = await upsert_user(session, callback.from_user, started=True)
-    await respond(callback, Screen(ru.SUB_OK), rich_buttons=_rich(user))
-    content = reward_service.reward_of(channel)
-    if content is not None:
-        await broadcast_delivery._send(
-            callback.bot, callback.message.chat.id, content, content.file_id
-        )
+    await _deliver(callback.bot, session, callback.message.chat.id, channel, user)

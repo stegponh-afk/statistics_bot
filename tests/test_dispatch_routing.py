@@ -173,3 +173,10 @@ async def test_reward_deep_link_flow(session, cache, bot: FakeBot):
     bot.members[(-100_40, 5)] = ChatMemberMember(user=tg_user(5))
     await dp.feed_update(bot, start_update(11))
     assert bot.calls_named("send_message")[-1]["text"] == "секрет"
+
+    # a second visit gets the "already received" note, not the reward again
+    await dp.feed_update(bot, start_update(12))
+    assert bot.calls_named("send_message")[-1]["text"] == "секрет"  # unchanged
+    last_screen = bot.calls_named("send_rich_message")[-1]["rich_message"]
+    heading = next(b for b in last_screen.blocks if b.type == "section_heading")
+    assert "уже получена" in str(heading.text)

@@ -45,8 +45,9 @@ async def reward_screen(bot, session: AsyncSession, channel: Chat) -> Screen:
         snippet = strip_tags(content.text or "") or f"[{content.type}]"
         status = ru.REWARD_STATUS_SET.format(snippet=snippet[:60])
     link = await reward_service.deep_link(bot, channel)
+    claims = await reward_service.claims_count(session, channel)
     text = ru.REWARD_CARD.format(
-        title=channel.title or channel.telegram_id, status=status, link=link
+        title=channel.title or channel.telegram_id, status=status, link=link, claims=claims
     )
     rows = [[Btn(ru.BTN_REWARD_SET, f"chat:{channel.id}:reward:set", STYLE_PRIMARY)]]
     if content is not None:
@@ -57,6 +58,8 @@ async def reward_screen(bot, session: AsyncSession, channel: Chat) -> Screen:
             ]
         )
         rows.append([Btn(ru.BTN_REWARD_POST, f"chat:{channel.id}:reward:post")])
+        if claims:
+            rows.append([Btn(ru.BTN_REWARD_RESET, f"chat:{channel.id}:reward:reset")])
     rows.append([Btn(ru.BTN_BACK, f"chat:{channel.id}")])
     return Screen(text, rows=rows)
 
@@ -160,6 +163,23 @@ async def cb_reward_clear(
         return
     await reward_service.clear_reward(session, channel)
     await callback.answer(ru.REWARD_CLEARED)
+    await respond(
+        callback, await reward_screen(callback.bot, session, channel), rich_buttons=_rich(user)
+    )
+
+
+@router.callback_query(F.data.regexp(r"^chat:(\d+):reward:reset$"))
+async def cb_reward_reset(
+    callback: CallbackQuery, session: AsyncSession, user: User | None
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    channel = await _channel(callback, session, user)
+    if channel is None:
+        return
+    await reward_service.reset_claims(session, channel)
+    await callback.answer(ru.REWARD_RESET_DONE)
     await respond(
         callback, await reward_screen(callback.bot, session, channel), rich_buttons=_rich(user)
     )
