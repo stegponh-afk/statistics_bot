@@ -144,3 +144,17 @@ async def test_rate_limit_is_unavailable(bot: FakeBot, cache):
 async def test_no_channels_is_trivially_subscribed(bot: FakeBot, cache):
     result = await check_user(bot, cache, USER, [])
     assert result.subscribed and not bot.calls
+
+
+async def test_member_status_labels(bot: FakeBot):
+    from app.services.subscription_checker import member_status
+
+    bot.members[(-1, USER)] = ChatMemberMember(user=tg_user(USER))
+    assert await member_status(bot, -1, USER) == (True, "подписчик")
+    bot.members[(-1, USER)] = ChatMemberLeft(user=tg_user(USER))
+    assert await member_status(bot, -1, USER) == (False, "не подписан")
+    bot.members[(-1, USER)] = TelegramBadRequest(
+        method=GetChatMember(chat_id=-1, user_id=USER), message="member list is inaccessible"
+    )
+    assert await member_status(bot, -1, USER) is None
+    assert len(bot.calls_named("get_chat_member")) == 3  # never cached

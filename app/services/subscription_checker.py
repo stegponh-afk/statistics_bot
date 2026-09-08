@@ -76,6 +76,34 @@ async def _check_one(
     return subscribed, None, False
 
 
+STATUS_LABELS = {
+    ChatMemberStatus.CREATOR: "владелец канала",
+    ChatMemberStatus.ADMINISTRATOR: "администратор канала",
+    ChatMemberStatus.MEMBER: "подписчик",
+    ChatMemberStatus.RESTRICTED: "ограничен",
+    ChatMemberStatus.LEFT: "не подписан",
+    ChatMemberStatus.KICKED: "заблокирован в канале",
+}
+
+
+async def member_status(bot: Bot, channel_tg_id: int, user_id: int) -> tuple[bool, str] | None:
+    """(subscribed?, human status) straight from Telegram, no cache;
+    None when the bot can't look (not an admin of the channel)."""
+    try:
+        member = await bot.get_chat_member(channel_tg_id, user_id)
+    except TelegramRetryAfter:
+        return None
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        text = str(e).lower()
+        if "user not found" in text or "participant_id_invalid" in text:
+            return False, STATUS_LABELS[ChatMemberStatus.LEFT]
+        return None
+    subscribed = member.status in _SUBSCRIBED or (
+        member.status == ChatMemberStatus.RESTRICTED and bool(getattr(member, "is_member", False))
+    )
+    return subscribed, STATUS_LABELS.get(member.status, str(member.status))
+
+
 async def check_user(
     bot: Bot, cache: Cache, user_id: int, channels: list[Chat], *, force: bool = False
 ) -> CheckResult:

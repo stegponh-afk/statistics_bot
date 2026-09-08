@@ -71,6 +71,7 @@ def chat_card_screen(
         text += ru.CHAT_COMMENTS_LINE.format(value=comments[0])
     rows = [[Btn(ru.BTN_CHAT_STATS, f"chat:{chat.id}:stats")]]
     if chat.is_channel:
+        rows.append([Btn(ru.BTN_CHAT_CHECK_USER, f"chat:{chat.id}:check")])
         rows.append(
             [
                 Btn(

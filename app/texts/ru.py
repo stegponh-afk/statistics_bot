@@ -547,3 +547,20 @@ COMMENTS_GATE_NEED_DELETE_RIGHT = (
 )
 COMMENTS_GATE_ENABLED = "Комментировать смогут только подписчики канала"
 COMMENTS_GATE_DISABLED = "Подписка в комментариях выключена"
+
+# --- manual subscription check (channel card) ---
+BTN_CHAT_CHECK_USER = "🔍 Проверить подписчика"
+CHECK_ASK_USER = (
+    "🔍 <b>Проверка подписки на «{title}»</b>\n"
+    f"{SEPARATOR}\n"
+    "Пришлите <b>ID пользователя</b> числом или <b>перешлите</b> сюда его сообщение.\n"
+    "Если у пользователя скрыта пересылка, подойдёт только ID.\n\n"
+    "Можно присылать несколько подряд."
+)
+CHECK_BAD_INPUT = "Не понял. Нужен числовой ID или пересланное сообщение пользователя."
+CHECK_SUBSCRIBED = "✅ <b>{name}</b> подписан на «{title}»\n" "Статус: {status}"
+CHECK_NOT_SUBSCRIBED = "❌ <b>{name}</b> не подписан на «{title}»\n" "Статус: {status}"
+CHECK_UNAVAILABLE = (
+    "⚠️ Не удалось проверить: бот не администратор канала «{title}» "
+    "или Telegram временно не отвечает."
+)
