@@ -48,8 +48,14 @@ def _bot_status_line(chat: Chat) -> str:
 
 
 def chat_card_screen(
-    chat: Chat, *, member_count: int | None, channels_count: int, whitelist_count: int
+    chat: Chat,
+    *,
+    member_count: int | None,
+    channels_count: int,
+    whitelist_count: int,
+    comments: tuple[str, bool] | None = None,
 ) -> Screen:
+    """`comments` (channels only): (status line, gate on?)."""
     text = ru.CHAT_CARD.format(
         icon=_chat_icon(chat),
         title=chat.title or chat.telegram_id,
@@ -61,8 +67,21 @@ def chat_card_screen(
             else ru.CHAT_MEMBERS_UNKNOWN
         ),
     )
+    if comments is not None:
+        text += ru.CHAT_COMMENTS_LINE.format(value=comments[0])
     rows = [[Btn(ru.BTN_CHAT_STATS, f"chat:{chat.id}:stats")]]
-    if not chat.is_channel:
+    if chat.is_channel:
+        rows.append(
+            [
+                Btn(
+                    ru.BTN_CHAT_COMMENTS_GATE_ON
+                    if comments and comments[1]
+                    else ru.BTN_CHAT_COMMENTS_GATE_OFF,
+                    f"chat:{chat.id}:comments_gate",
+                )
+            ]
+        )
+    else:
         rows.append(
             [
                 Btn(
@@ -106,12 +125,33 @@ async def render_chat_card(
     )
     channels = await forcesub_service.list_required_channels(session, chat)
     whitelist = await forcesub_service.list_whitelist(session, chat)
+    comments = None
+    if chat.is_channel and chat.is_active:
+        comments = await comments_status(bot, session, chat, refresh=refresh)
     return chat_card_screen(
         chat,
         member_count=member_count,
         channels_count=len(channels),
         whitelist_count=len(whitelist),
+        comments=comments,
     )
+
+
+async def comments_status(
+    bot: Bot, session: AsyncSession, channel: Chat, *, refresh: bool = False
+) -> tuple[str, bool]:
+    from app.services import forcesub_service
+
+    group = await chat_service.resolve_linked_group(bot, session, channel, refresh=refresh)
+    if group is None:
+        if channel.linked_chat_tg_id is None:
+            return ru.CHAT_COMMENTS_NO_DISCUSSION, False
+        return ru.CHAT_COMMENTS_BOT_MISSING, False
+    enabled = await forcesub_service.comments_gate_enabled(session, channel, group)
+    line = ru.CHAT_COMMENTS_GROUP.format(title=group.title or group.telegram_id)
+    if enabled:
+        line += ru.CHAT_COMMENTS_GATE_ON
+    return line, enabled
 
 
 @router.message(Command("chats"))

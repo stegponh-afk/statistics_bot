@@ -38,6 +38,7 @@ class FakeBot:
         self.administrators: dict[int, list[ChatMember] | Exception] = {}
         self.member_counts: dict[int, int] = {}
         self.invite_links: dict[int, str] = {}
+        self.linked_chats: dict[int, int] = {}
         # method name -> Exception to raise on the next call of that method
         self.fail_next: dict[str, Exception] = {}
         self._message_id = 100
@@ -103,6 +104,7 @@ class FakeBot:
                     "gifts_from_channels": False,
                 },
                 "invite_link": self.invite_links.get(chat_id),
+                "linked_chat_id": self.linked_chats.get(chat_id),
             }
         )
 

@@ -327,6 +327,28 @@ async def get_member_count(bot: Bot, session: AsyncSession, chat: Chat) -> int |
     return count
 
 
+async def resolve_linked_group(
+    bot: Bot, session: AsyncSession, channel: Chat, *, refresh: bool = False
+) -> Chat | None:
+    """The channel's discussion group (where comments live) as a Chat row —
+    only if the bot is in that group; None if the channel has no
+    discussion group or the bot hasn't been added to it."""
+    if refresh or channel.linked_chat_tg_id is None:
+        try:
+            info = await bot.get_chat(channel.telegram_id)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            return None
+        if info.linked_chat_id != channel.linked_chat_tg_id:
+            channel.linked_chat_tg_id = info.linked_chat_id
+            await session.commit()
+    if channel.linked_chat_tg_id is None:
+        return None
+    group = await get_chat_by_telegram_id(session, channel.linked_chat_tg_id)
+    if group is None or not group.is_active:
+        return None
+    return group
+
+
 async def resolve_invite_link(bot: Bot, session: AsyncSession, chat: Chat) -> str | None:
     """A link users can follow to join/subscribe: t.me/username for public
     chats, else a cached/exported invite link (needs "invite users")."""

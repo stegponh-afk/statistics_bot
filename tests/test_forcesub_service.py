@@ -50,3 +50,28 @@ async def test_whitelist_roundtrip(session, cache):
     assert await forcesub_service.whitelist_ids(session, cache, group) == {7}
     await forcesub_service.remove_from_whitelist(session, cache, group, 7)
     assert await forcesub_service.whitelist_ids(session, cache, group) == set()
+
+
+async def test_comments_gate_binds_channel_in_its_discussion_group(session, cache, bot):
+    channel = await chat_service.upsert_chat(session, TgChat(id=-10, type="channel", title="C"))
+    group = await chat_service.upsert_chat(session, TgChat(id=-20, type="supergroup", title="G"))
+    group.bot_can_delete = True
+    await session.commit()
+
+    assert await chat_service.resolve_linked_group(bot, session, channel) is None
+    bot.linked_chats[-10] = -20
+    linked = await chat_service.resolve_linked_group(bot, session, channel, refresh=True)
+    assert linked.id == group.id and channel.linked_chat_tg_id == -20
+    assert len(bot.calls_named("get_chat")) == 2
+    await chat_service.resolve_linked_group(bot, session, channel)  # cached, no API call
+    assert len(bot.calls_named("get_chat")) == 2
+
+    assert not await forcesub_service.comments_gate_enabled(session, channel, group)
+    await forcesub_service.set_comments_gate(session, cache, channel, group, True)
+    assert group.forcesub_enabled
+    assert await forcesub_service.comments_gate_enabled(session, channel, group)
+    assert await forcesub_service.required_channel_tg_ids(session, cache, group) == [-10]
+
+    await forcesub_service.set_comments_gate(session, cache, channel, group, False)
+    assert not group.forcesub_enabled
+    assert await forcesub_service.required_channel_tg_ids(session, cache, group) == []

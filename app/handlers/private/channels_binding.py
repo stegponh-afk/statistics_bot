@@ -134,3 +134,41 @@ async def cb_forcesub_toggle(
 
     screen = await render_chat_card(callback.bot, session, chat)
     await respond(callback, screen, rich_buttons=user.rich_buttons_enabled)
+
+
+@router.callback_query(F.data.regexp(r"^chat:(\d+):comments_gate$"))
+async def cb_comments_gate_toggle(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, cache: Cache
+) -> None:
+    """On a channel's card: require a channel subscription to comment,
+    i.e. bind the channel in its discussion group and switch that group's
+    gate."""
+    if user is None:
+        await callback.answer()
+        return
+    channel = await load_admin_chat(session, user, int(callback.data.split(":")[1]))
+    if channel is None or not channel.is_channel:
+        await callback.answer(ru.CHAT_NOT_FOUND, show_alert=True)
+        return
+    group = await chat_service.resolve_linked_group(callback.bot, session, channel, refresh=True)
+    if group is None:
+        await callback.answer(ru.COMMENTS_GATE_NO_GROUP, show_alert=True)
+        return
+
+    enabled = await forcesub_service.comments_gate_enabled(session, channel, group)
+    if enabled:
+        await forcesub_service.set_comments_gate(session, cache, channel, group, False)
+        await callback.answer(ru.COMMENTS_GATE_DISABLED)
+    else:
+        await chat_service.refresh_bot_membership(callback.bot, session, group)
+        if not group.bot_can_delete:
+            await callback.answer(
+                ru.COMMENTS_GATE_NEED_DELETE_RIGHT.format(title=group.title or group.telegram_id),
+                show_alert=True,
+            )
+            return
+        await forcesub_service.set_comments_gate(session, cache, channel, group, True)
+        await callback.answer(ru.COMMENTS_GATE_ENABLED)
+
+    screen = await render_chat_card(callback.bot, session, channel)
+    await respond(callback, screen, rich_buttons=user.rich_buttons_enabled)

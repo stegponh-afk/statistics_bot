@@ -89,7 +89,7 @@ class ForceSubGateMiddleware(BaseMiddleware):
                 event.from_user.id,
                 screen,
                 rich_buttons=user.rich_buttons_enabled if user else True,
-                thread_id=event.message_thread_id if event.is_topic_message else None,
+                thread_id=event.message_thread_id,
             )
         return None  # swallowed: not logged, not handled
 

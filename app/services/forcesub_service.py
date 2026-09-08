@@ -111,6 +111,32 @@ async def toggle_required_channel(
     return now_required
 
 
+async def comments_gate_enabled(session: AsyncSession, channel: Chat, group: Chat) -> bool:
+    """True if the channel's discussion `group` gates comments on being
+    subscribed to `channel`."""
+    if not group.forcesub_enabled:
+        return False
+    return channel.id in {c.id for c in await list_required_channels(session, group)}
+
+
+async def set_comments_gate(
+    session: AsyncSession, cache: Cache, channel: Chat, group: Chat, enabled: bool
+) -> None:
+    """Binds/unbinds `channel` as required in its discussion `group` and
+    switches the group's gate accordingly (off only when no channel is
+    left required)."""
+    bound = channel.id in {c.id for c in await list_required_channels(session, group)}
+    if enabled:
+        if not bound:
+            await toggle_required_channel(session, cache, group, channel)
+        await set_forcesub_enabled(session, group, True)
+    else:
+        if bound:
+            await toggle_required_channel(session, cache, group, channel)
+        if not await list_required_channels(session, group):
+            await set_forcesub_enabled(session, group, False)
+
+
 async def set_forcesub_enabled(session: AsyncSession, chat: Chat, enabled: bool) -> Chat:
     chat.forcesub_enabled = enabled
     await session.commit()

@@ -527,3 +527,23 @@ ADMIN_BOT_ROW = (
     "· <b>{name}</b>{bot} — аудитория {audience} · каналов {channels} · "
     "запросов {requests} · владелец: {owner}"
 )
+
+# --- channel comments gate (channel card) ---
+CHAT_COMMENTS_LINE = "Комментарии: {value}\n"
+CHAT_COMMENTS_GROUP = "группа «{title}»"
+CHAT_COMMENTS_GATE_ON = " · подписка обязательна ✅"
+CHAT_COMMENTS_NO_DISCUSSION = "обсуждения не подключены"
+CHAT_COMMENTS_BOT_MISSING = (
+    "есть группа обсуждений, но бот в неё не добавлен — добавьте его туда администратором"
+)
+BTN_CHAT_COMMENTS_GATE_ON = "🔒 Подписка в комментариях: ВКЛ"
+BTN_CHAT_COMMENTS_GATE_OFF = "🔓 Подписка в комментариях: ВЫКЛ"
+COMMENTS_GATE_NO_GROUP = (
+    "У канала нет группы обсуждений с ботом. Подключите обсуждения в настройках канала "
+    "и добавьте бота в эту группу администратором с правом «Удалять сообщения»."
+)
+COMMENTS_GATE_NEED_DELETE_RIGHT = (
+    "Боту нужно право «Удалять сообщения» в группе обсуждений «{title}»."
+)
+COMMENTS_GATE_ENABLED = "Комментировать смогут только подписчики канала"
+COMMENTS_GATE_DISABLED = "Подписка в комментариях выключена"

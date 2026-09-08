@@ -78,6 +78,8 @@ class Chat(Base):
     title: Mapped[str | None] = mapped_column(String(256))
     username: Mapped[str | None] = mapped_column(String(64))
     invite_link: Mapped[str | None] = mapped_column(Text)
+    # For channels: the discussion group (comments), from getChat.
+    linked_chat_tg_id: Mapped[int | None] = mapped_column(BigInteger)
 
     bot_status: Mapped[BotStatus] = mapped_column(
         Enum(BotStatus, name="bot_status", values_callable=_enum_values), default=BotStatus.MEMBER
