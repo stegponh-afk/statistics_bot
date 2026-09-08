@@ -7,6 +7,7 @@
 - is_chat_admin  — the sender administers chat_row (anonymous admins count)
 """
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cache import Cache
 from app.services import chat_service
 from app.services.user_service import get_user_by_telegram_id, upsert_user
+
+logger = logging.getLogger(__name__)
 
 # How long a user's/chat's name is trusted before it's re-checked against
 # the update — spares one UPDATE per message in busy groups.
@@ -41,6 +44,13 @@ class ChatContextMiddleware(BaseMiddleware):
         tg_chat = data.get("event_chat")
         inner = event.event if isinstance(event, Update) else event
         message = inner if isinstance(inner, Message) else None
+        logger.info(
+            "update %s chat=%s(%s) user=%s",
+            event.event_type if isinstance(event, Update) else type(inner).__name__,
+            tg_chat.id if tg_chat else None,
+            tg_chat.type if tg_chat else None,
+            from_user.id if from_user else None,
+        )
 
         data["user"] = None
         if from_user is not None and not from_user.is_bot:

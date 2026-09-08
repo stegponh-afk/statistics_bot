@@ -90,7 +90,7 @@ async def main() -> None:
     await setup_commands(bot)
     await bot.delete_webhook(drop_pending_updates=False)
     me = await bot.get_me()
-    logger.info("Starting polling as @%s", me.username)
+    logger.info("Starting polling as @%s, updates=%s", me.username, ALLOWED_UPDATES)
     try:
         await dp.start_polling(bot, allowed_updates=ALLOWED_UPDATES)
     finally:

@@ -37,6 +37,7 @@ class FakeBot:
         # chat_id -> list[ChatMember] | Exception
         self.administrators: dict[int, list[ChatMember] | Exception] = {}
         self.member_counts: dict[int, int] = {}
+        self.invite_links: dict[int, str] = {}
         # method name -> Exception to raise on the next call of that method
         self.fail_next: dict[str, Exception] = {}
         self._message_id = 100
@@ -81,6 +82,34 @@ class FakeBot:
         self._record("get_chat_member_count", chat_id=chat_id)
         self._maybe_fail("get_chat_member_count")
         return self.member_counts.get(chat_id, 0)
+
+    async def get_chat(self, chat_id: int) -> Any:
+        self._record("get_chat", chat_id=chat_id)
+        self._maybe_fail("get_chat")
+        from aiogram.types import ChatFullInfo
+
+        return ChatFullInfo.model_validate(
+            {
+                "id": chat_id,
+                "type": "channel" if chat_id < 0 else "private",
+                "title": "Chat",
+                "accent_color_id": 0,
+                "max_reaction_count": 1,
+                "accepted_gift_types": {
+                    "unlimited_gifts": False,
+                    "limited_gifts": False,
+                    "unique_gifts": False,
+                    "premium_subscription": False,
+                    "gifts_from_channels": False,
+                },
+                "invite_link": self.invite_links.get(chat_id),
+            }
+        )
+
+    async def export_chat_invite_link(self, chat_id: int) -> str:
+        self._record("export_chat_invite_link", chat_id=chat_id)
+        self._maybe_fail("export_chat_invite_link")
+        return f"https://t.me/+exported{abs(chat_id)}"
 
     # --- sending / editing ---------------------------------------------
 
