@@ -128,6 +128,42 @@ class FakeBot:
             )
         return self._next_message(chat_id)
 
+    def _media_sender(self, kind: str):
+        async def sender(chat_id: int, media: Any, **kwargs: Any) -> Message:
+            self._record(f"send_{kind}", chat_id=chat_id, media=media, **kwargs)
+            self._maybe_fail(f"send_{kind}")
+            payload = {"file_id": f"{kind}-fid-{self.id}", "file_unique_id": "u"}
+            if kind == "photo":
+                extra = {"photo": [{**payload, "width": 1, "height": 1}]}
+            elif kind in ("video", "animation"):
+                extra = {kind: {**payload, "width": 1, "height": 1, "duration": 1}}
+            elif kind in ("audio", "voice"):
+                extra = {kind: {**payload, "duration": 1}}
+            else:
+                extra = {kind: payload}
+            return self._next_message(chat_id, text=None, **extra)
+
+        return sender
+
+    def __getattr__(self, name: str):
+        if name.startswith("send_") and name[5:] in (
+            "photo",
+            "video",
+            "animation",
+            "document",
+            "audio",
+            "voice",
+        ):
+            return self._media_sender(name[5:])
+        raise AttributeError(name)
+
+    async def download(self, file_id: str, **kwargs: Any):
+        import io
+
+        self._record("download", file_id=file_id)
+        self._maybe_fail("download")
+        return io.BytesIO(b"media-bytes")
+
     async def edit_ephemeral_message_text(self, **kwargs: Any) -> bool:
         self._record("edit_ephemeral_message_text", **kwargs)
         self._maybe_fail("edit_ephemeral_message_text")

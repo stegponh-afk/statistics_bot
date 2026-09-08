@@ -39,8 +39,9 @@ ALLOWED_UPDATES = ["message", "callback_query", "my_chat_member", "chat_member",
 async def setup_commands(bot: Bot) -> None:
     private = [
         BotCommand(command="start", description="Главное меню"),
-        BotCommand(command="chats", description="Мои чаты"),
-        BotCommand(command="keys", description="API-ключи для ваших ботов"),
+        BotCommand(command="chats", description="Чаты"),
+        BotCommand(command="bots", description="Боты: API-ключи и токены"),
+        BotCommand(command="broadcast", description="Рассылка"),
         BotCommand(command="help", description="Помощь"),
     ]
     # In groups the answer is visible only to whoever sent the command.

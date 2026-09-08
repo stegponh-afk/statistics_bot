@@ -3,12 +3,13 @@ import logging
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from app.cache import Cache
 from app.database.models import BotStatus, Chat
 from app.database.session import async_session_factory
-from app.services import chat_service, stats_service
+from app.services import broadcast_delivery, broadcast_service, chat_service, stats_service
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -33,11 +34,31 @@ async def job_purge_stats() -> None:
     logger.info("purged %d events and %d word rows", events, words)
 
 
+async def job_run_due_broadcasts(bot: Bot) -> None:
+    async with async_session_factory() as session:
+        due = await broadcast_service.due_broadcasts(session)
+        for broadcast in due:
+            try:
+                await broadcast_delivery.run_broadcast(session, bot, broadcast)
+            except Exception:  # noqa: BLE001 — one broken broadcast must not block the rest
+                logger.exception("broadcast %s failed", broadcast.id)
+                broadcast_service.advance_after_run(broadcast)
+                await session.commit()
+
+
 def setup_scheduler(bot: Bot, cache: Cache) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(
         job_resync_admins, CronTrigger(hour=4, minute=30), args=[bot, cache], id="resync_admins"
     )
     scheduler.add_job(job_purge_stats, CronTrigger(hour=4, minute=0), id="purge_stats")
+    scheduler.add_job(
+        job_run_due_broadcasts,
+        IntervalTrigger(seconds=30),
+        args=[bot],
+        id="run_broadcasts",
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     return scheduler

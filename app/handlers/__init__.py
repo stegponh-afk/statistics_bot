@@ -13,7 +13,8 @@ from app.handlers.group import membership as group_membership
 from app.handlers.group import stats_callbacks as group_stats
 from app.handlers.private import (
     admin,
-    api_keys,
+    bots,
+    broadcast,
     channels_binding,
     chat_panel,
     my_chats,
@@ -37,7 +38,8 @@ def build_router(cache: Cache) -> Router:
     private_router.include_router(chat_panel.router)
     private_router.include_router(channels_binding.router)
     private_router.include_router(whitelist.router)
-    private_router.include_router(api_keys.router)
+    private_router.include_router(bots.router)
+    private_router.include_router(broadcast.router)
     private_router.include_router(admin.router)
     private_router.include_router(settings.router)
     private_router.include_router(private_help.router)

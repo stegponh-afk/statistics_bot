@@ -15,8 +15,8 @@ def main_menu_screen() -> Screen:
     return Screen(
         ru.MAIN_MENU_TITLE,
         rows=[
-            [Btn(ru.BTN_MY_CHATS, "chats:list")],
-            [Btn(ru.BTN_API_KEYS, "keys:list")],
+            [Btn(ru.BTN_MY_CHATS, "chats:list"), Btn(ru.BTN_MY_BOTS, "keys:list")],
+            [Btn(ru.BTN_BROADCAST, "bc:menu")],
             [Btn(ru.BTN_SETTINGS, "settings:menu"), Btn(ru.BTN_HELP, "menu:help")],
         ],
         has_back_row=False,

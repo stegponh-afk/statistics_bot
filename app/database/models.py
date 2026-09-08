@@ -2,6 +2,7 @@ import enum
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Date,
     DateTime,
@@ -171,6 +172,97 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # The owner's own bot, for broadcasts sent on its behalf. The token is
+    # stored as given (the owner is told so); NULL = broadcasts disabled.
+    bot_token: Mapped[str | None] = mapped_column(Text)
+    bot_username: Mapped[str | None] = mapped_column(String(64))
+    bot_user_id: Mapped[int | None] = mapped_column(BigInteger)
+
+    @property
+    def has_bot(self) -> bool:
+        return bool(self.bot_token)
+
+
+class BotAudience(Base):
+    """Users of the owner's bot we may broadcast to: everyone the bot has
+    checked through /v1/check or registered through POST /v1/users."""
+
+    __tablename__ = "bot_audience"
+
+    api_key_id: Mapped[int] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Set when the user blocked the owner's bot (403 on send).
+    is_blocked: Mapped[bool] = mapped_column(default=False)
+
+
+class BroadcastKind(str, enum.Enum):
+    NOW = "now"
+    ONCE = "once"
+    RECURRING = "recurring"
+
+
+class BroadcastStatus(str, enum.Enum):
+    SCHEDULED = "scheduled"  # waiting for next_run_at
+    PAUSED = "paused"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
+
+class Broadcast(Base):
+    __tablename__ = "broadcasts"
+    __table_args__ = (Index("ix_broadcasts_due", "status", "next_run_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default=BroadcastStatus.SCHEDULED.value)
+    # See broadcast_service.Content: type, text, entities, file_id, buttons.
+    content: Mapped[dict] = mapped_column(JSON)
+
+    # once: the moment; recurring: weekdays (0=Mon .. 6=Sun, comma-separated)
+    # + "HH:MM" in `timezone`.
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recur_days: Mapped[str | None] = mapped_column(String(16))
+    recur_time: Mapped[str | None] = mapped_column(String(5))
+    timezone: Mapped[str] = mapped_column(String(48))
+
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    runs_count: Mapped[int] = mapped_column(default=0)
+    sent_count: Mapped[int] = mapped_column(default=0)
+    failed_count: Mapped[int] = mapped_column(default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def recur_days_list(self) -> list[int]:
+        return [int(x) for x in (self.recur_days or "").split(",") if x != ""]
+
+
+class BroadcastTargetKind(str, enum.Enum):
+    CHAT = "chat"  # target_id = chats.id
+    BOT = "bot"  # target_id = api_keys.id (the owner's bot -> its audience)
+
+
+class BroadcastTarget(Base):
+    __tablename__ = "broadcast_targets"
+
+    broadcast_id: Mapped[int] = mapped_column(
+        ForeignKey("broadcasts.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    target_id: Mapped[int] = mapped_column(primary_key=True)
 
 
 class ApiKeyChannel(Base):

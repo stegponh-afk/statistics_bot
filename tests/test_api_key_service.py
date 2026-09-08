@@ -34,12 +34,11 @@ async def test_rotate_keeps_channels_and_revokes_old(session, cache):
     await api_key_service.toggle_key_channel(session, key, channel)
 
     new_key, new_raw = await api_key_service.rotate_key(session, cache, key)
-    assert new_key.id != key.id and new_raw != raw
-    assert key.is_active is False and key.revoked_at is not None
+    assert new_key.id == key.id and new_raw != raw
     assert await api_key_service.find_active_key(session, raw) is None
+    assert (await api_key_service.find_active_key(session, new_raw)).id == key.id
     assert [c.id for c in await api_key_service.list_key_channels(session, new_key)] == [channel.id]
-    assert [k.id for k in await api_key_service.list_keys(session, owner)] == [new_key.id]
-    assert len(await api_key_service.list_keys(session, owner, include_revoked=True)) == 2
+    assert [k.id for k in await api_key_service.list_keys(session, owner)] == [key.id]
 
 
 async def test_delete_and_touch(session, cache):
