@@ -136,3 +136,35 @@ async def test_due_and_recurring_advance(session):
     assert recurring.id not in {b.id for b in await broadcast_service.due_broadcasts(session)}
     await broadcast_service.set_status(session, recurring, BroadcastStatus.CANCELLED)
     assert [b.id for b in await broadcast_service.list_broadcasts(session, owner)] == [once.id]
+
+
+async def test_html_content_is_sent_with_parse_mode_and_entities_without(session, bot: FakeBot):
+    owner = await _owner(session)
+    chat = await _chat(session, -100_2)
+    html = Content(type="text", text="<b>x</b>", parse_mode="HTML")
+    b = await broadcast_service.create_broadcast(
+        session,
+        owner,
+        kind=BroadcastKind.NOW,
+        content=html,
+        chat_ids=[chat.id],
+        bot_key_ids=[],
+        tz_name="UTC",
+    )
+    await broadcast_delivery.run_broadcast(session, bot, b)
+    call = bot.calls_named("send_message")[-1]
+    assert call["parse_mode"] == "HTML" and call["entities"] is None
+
+    plain = Content(type="text", text="x", entities=[{"type": "bold", "offset": 0, "length": 1}])
+    b = await broadcast_service.create_broadcast(
+        session,
+        owner,
+        kind=BroadcastKind.NOW,
+        content=plain,
+        chat_ids=[chat.id],
+        bot_key_ids=[],
+        tz_name="UTC",
+    )
+    await broadcast_delivery.run_broadcast(session, bot, b)
+    call = bot.calls_named("send_message")[-1]
+    assert call["parse_mode"] is None and call["entities"][0].type == "bold"

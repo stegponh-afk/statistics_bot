@@ -44,7 +44,9 @@ class RunResult:
 
 
 async def _send(bot: Bot, chat_id: int, content: Content, media) -> Message:
-    kwargs = dict(reply_markup=content.reply_markup())
+    # parse_mode is passed explicitly either way: our own bot defaults to
+    # HTML, which must not apply to text that carries entities.
+    kwargs = dict(reply_markup=content.reply_markup(), parse_mode=content.parse_mode)
     if content.type == "text":
         return await bot.send_message(
             chat_id, content.text or "", entities=content.message_entities(), **kwargs

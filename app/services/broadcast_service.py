@@ -20,6 +20,7 @@ from app.database.models import (
     Chat,
     User,
 )
+from app.services.markdown import has_markup, markdown_to_html
 from app.utils import ensure_aware, get_zone
 
 MEDIA_TYPES = ("photo", "video", "document", "animation", "audio", "voice")
@@ -38,6 +39,9 @@ class Content:
     entities: list[dict] | None = None
     file_id: str | None = None
     buttons: list[list[dict]] = field(default_factory=list)  # [[{"text","url"}]]
+    # "HTML" when `text` was produced from markdown (then entities is None);
+    # None when `entities` carry the formatting the admin applied in Telegram.
+    parse_mode: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,15 +73,8 @@ class Content:
 def content_from_message(message: Message) -> Content | None:
     """What of an admin's message can be re-sent later. None = unsupported."""
     if message.text is not None:
-        return Content(
-            type="text",
-            text=message.text,
-            entities=[e.model_dump(exclude_none=True) for e in message.entities or []] or None,
-        )
+        return _with_markdown(Content(type="text"), message.text, message.entities)
     caption = message.caption
-    caption_entities = [
-        e.model_dump(exclude_none=True) for e in message.caption_entities or []
-    ] or None
     if message.photo:
         file_id = message.photo[-1].file_id
         kind = "photo"
@@ -93,7 +90,24 @@ def content_from_message(message: Message) -> Content | None:
         file_id, kind = message.voice.file_id, "voice"
     else:
         return None
-    return Content(type=kind, text=caption, entities=caption_entities, file_id=file_id)
+    content = Content(type=kind, file_id=file_id)
+    if caption is None:
+        return content
+    return _with_markdown(content, caption, message.caption_entities)
+
+
+def _with_markdown(content: Content, text: str, entities) -> Content:
+    """Formatting the admin applied in Telegram arrives as entities and is
+    kept as is; a plain message may instead use markdown (see
+    services.markdown), which becomes HTML."""
+    dumped = [e.model_dump(exclude_none=True) for e in entities or []] or None
+    if dumped is None and has_markup(text):
+        content.text = markdown_to_html(text)
+        content.parse_mode = "HTML"
+    else:
+        content.text = text
+        content.entities = dumped
+    return content
 
 
 def parse_buttons(text: str) -> list[list[dict]] | None:

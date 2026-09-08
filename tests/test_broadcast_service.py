@@ -108,3 +108,41 @@ def test_content_roundtrip_and_markup():
     markup = back.reply_markup()
     assert markup.inline_keyboard[0][0].url == "https://a"
     assert Content(type="text", text="x").reply_markup() is None
+
+
+def test_plain_message_with_markdown_becomes_html():
+    msg = make_message(chat_type="private", text="Привет, **мир**! _ок_")
+    content = content_from_message(msg)
+    assert content.parse_mode == "HTML"
+    assert content.text == "Привет, <b>мир</b>! <i>ок</i>"
+    assert content.entities is None
+
+
+def test_native_formatting_wins_over_markdown():
+    msg = make_message(
+        chat_type="private",
+        text="*not markdown* bold",
+        entities=[{"type": "bold", "offset": 15, "length": 4}],
+    )
+    content = content_from_message(msg)
+    assert content.parse_mode is None and content.text == "*not markdown* bold"
+    assert content.entities[0]["type"] == "bold"
+
+
+def test_plain_text_without_markup_is_untouched():
+    msg = make_message(chat_type="private", text="a < b & c")
+    content = content_from_message(msg)
+    assert content.parse_mode is None and content.text == "a < b & c"
+
+
+def test_caption_markdown():
+    photo = make_message(
+        chat_type="private",
+        text=None,
+        content_type_payload={
+            "photo": [{"file_id": "big", "file_unique_id": "b", "width": 9, "height": 9}],
+            "caption": "||секрет||",
+        },
+    )
+    content = content_from_message(photo)
+    assert content.parse_mode == "HTML" and content.text == "<tg-spoiler>секрет</tg-spoiler>"
