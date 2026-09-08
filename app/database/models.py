@@ -20,6 +20,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database.base import Base
 
 
+def _enum_values(enum_cls) -> list[str]:
+    """Store enum .value (lowercase, as the migration declares the PG
+    types), not the member name — SQLAlchemy's default."""
+    return [member.value for member in enum_cls]
+
+
 class ChatKind(str, enum.Enum):
     GROUP = "group"
     SUPERGROUP = "supergroup"
@@ -65,13 +71,15 @@ class Chat(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    type: Mapped[ChatKind] = mapped_column(Enum(ChatKind, name="chat_kind"))
+    type: Mapped[ChatKind] = mapped_column(
+        Enum(ChatKind, name="chat_kind", values_callable=_enum_values)
+    )
     title: Mapped[str | None] = mapped_column(String(256))
     username: Mapped[str | None] = mapped_column(String(64))
     invite_link: Mapped[str | None] = mapped_column(Text)
 
     bot_status: Mapped[BotStatus] = mapped_column(
-        Enum(BotStatus, name="bot_status"), default=BotStatus.MEMBER
+        Enum(BotStatus, name="bot_status", values_callable=_enum_values), default=BotStatus.MEMBER
     )
     bot_can_delete: Mapped[bool] = mapped_column(default=False)
     bot_can_invite: Mapped[bool] = mapped_column(default=False)
@@ -112,7 +120,9 @@ class ChatAdmin(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
     )
-    status: Mapped[AdminStatus] = mapped_column(Enum(AdminStatus, name="admin_status"))
+    status: Mapped[AdminStatus] = mapped_column(
+        Enum(AdminStatus, name="admin_status", values_callable=_enum_values)
+    )
     is_anonymous: Mapped[bool] = mapped_column(default=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

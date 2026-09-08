@@ -126,3 +126,13 @@ async def test_migrate_chat_id(session):
     chat = await chat_service.upsert_chat(session, _tg_chat(-5, "group"))
     await chat_service.migrate_chat_id(session, -5, -100_5)
     assert (await chat_service.get_chat_by_telegram_id(session, -100_5)).id == chat.id
+
+
+def test_enum_columns_store_values_not_member_names():
+    # PostgreSQL enums in alembic 0001 are declared with the lowercase
+    # .value strings; SQLAlchemy's default would send member names.
+    from app.database.models import Chat, ChatAdmin
+
+    assert Chat.__table__.c.bot_status.type.enums == ["member", "administrator", "left", "kicked"]
+    assert Chat.__table__.c.type.type.enums == ["group", "supergroup", "channel"]
+    assert ChatAdmin.__table__.c.status.type.enums == ["creator", "administrator"]
