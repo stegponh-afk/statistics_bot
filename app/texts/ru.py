@@ -307,6 +307,198 @@ KEY_HOWTO = (
     "<code>GET {base}/v1/channels</code> — список каналов ключа для отрисовки кнопок."
 )
 
+# --- bots (the owner's own bots: API key + token + audience) ---
+BTN_MY_BOTS = "🤖 Боты"
+BTN_BROADCAST = "📨 Рассылка"
+BOTS_TITLE = (
+    "🤖 <b>Боты</b>\n"
+    f"{SEPARATOR}\n"
+    "Ваши боты. У каждого есть API-ключ для проверки подписки, а с токеном бот "
+    "может получать рассылки для своих пользователей."
+)
+BOTS_EMPTY_LINE = "<i>Пока ни одного бота.</i>"
+BOT_ROW = "🤖 {name}"
+BTN_BOT_NEW = "➕ Добавить бота"
+BOT_ASK_NAME = (
+    "🤖 <b>Новый бот</b>\n"
+    f"{SEPARATOR}\n"
+    "Как назвать бота? Например, его @username.\n"
+    "Отправьте название (до 64 символов)."
+)
+BOT_CREATED = (
+    "✅ <b>Бот добавлен</b>\n"
+    f"{SEPARATOR}\n"
+    "Название: <b>{name}</b>\n\n"
+    "API-ключ для проверки подписки — скопируйте, он показывается <b>только сейчас</b>:\n"
+    "<code>{raw}</code>\n\n"
+    "Дальше: привяжите каналы («Каналы»), а для рассылок добавьте токен бота."
+)
+BOT_CARD = (
+    "🤖 <b>{name}</b>\n"
+    f"{SEPARATOR}\n"
+    "API-ключ: <code>{prefix}…</code> · запросов: <b>{requests}</b>\n"
+    "Последний запрос: {last_used}\n"
+    "Каналов для проверки: <b>{channels}</b>\n"
+    "Токен: {token_line}\n"
+    "Аудитория для рассылок: <b>{audience}</b>{blocked_line}"
+)
+BOT_TOKEN_SET = "добавлен (@{username})"
+BOT_TOKEN_MISSING = "не добавлен — рассылки недоступны"
+BOT_BLOCKED_LINE = " (заблокировали бота: {blocked})"
+BTN_BOT_TOKEN_ADD = "🔐 Добавить токен"
+BTN_BOT_TOKEN_REMOVE = "🔐 Убрать токен"
+BOT_ASK_TOKEN = (
+    "🔐 <b>Токен бота</b>\n"
+    f"{SEPARATOR}\n"
+    "Пришлите токен вашего бота из @BotFather (вида <code>123456:ABC…</code>).\n\n"
+    "Токен нужен, чтобы рассылки уходили пользователям <b>от имени вашего бота</b>. "
+    "Он хранится в базе этого сервиса — добавляйте, только если доверяете ему. "
+    "Сообщение с токеном будет удалено."
+)
+BOT_TOKEN_INVALID = "Токен не подошёл: Telegram его не принял. Проверьте и пришлите ещё раз."
+BOT_TOKEN_SAVED = "Токен сохранён: @{username}"
+BOT_TOKEN_REMOVED = "Токен удалён"
+BOT_AUDIENCE_HINT = (
+    "Аудитория — пользователи вашего бота, которых он проверял через "
+    "<code>/v1/check</code> или зарегистрировал через <code>POST /v1/users</code>."
+)
+KEY_HOWTO_USERS = (
+    "\n\n<b>Аудитория для рассылок</b>\n"
+    "Каждый пользователь, проверенный через <code>/v1/check</code>, попадает в аудиторию. "
+    "Чтобы добавить остальных, отправьте\n"
+    '<code>POST {base}/v1/users</code> с телом <code>{{"user_ids": [1, 2, 3]}}</code> '
+    "(до 10 000 за раз)."
+)
+
+# --- broadcasts ---
+BROADCAST_MENU = (
+    "📨 <b>Рассылка</b>\n"
+    f"{SEPARATOR}\n"
+    "Отправляйте сообщения в свои чаты и пользователям своих ботов: "
+    "сразу, к заданному времени или по расписанию."
+)
+BTN_BROADCAST_NEW = "✉️ Новая рассылка"
+BTN_BROADCAST_LIST = "📋 Мои рассылки"
+BROADCAST_NO_TARGETS = (
+    "📨 <b>Рассылка</b>\n"
+    f"{SEPARATOR}\n"
+    "Пока некуда рассылать: добавьте бота в свои чаты администратором "
+    "или добавьте токен своего бота в разделе «Боты»."
+)
+BROADCAST_PICK_TARGETS = (
+    "📨 <b>Куда отправить?</b>\n" f"{SEPARATOR}\n" "Отметьте чаты и ботов. Выбрано: <b>{count}</b>"
+)
+BROADCAST_TARGET_ON = "✅ {title}"
+BROADCAST_TARGET_OFF = "☐ {title}"
+BROADCAST_TARGET_BOT = "🤖 {name} ({audience} чел.)"
+BTN_NEXT = "Далее ➡️"
+BROADCAST_NEED_TARGET = "Отметьте хотя бы один чат или бота"
+BROADCAST_ASK_MESSAGE = (
+    "✉️ <b>Сообщение</b>\n"
+    f"{SEPARATOR}\n"
+    "Пришлите сообщение для рассылки: текст или фото/видео/файл с подписью.\n\n"
+    "Форматирование — как в Telegram (выделите текст → Жирный и т.д.) "
+    "или markdown-разметкой:\n"
+    "<code>**жирный**</code> · <code>_курсив_</code> · <code>__подчёркнутый__</code> · "
+    "<code>~~зачёркнутый~~</code> · <code>||спойлер||</code> · <code>`код`</code> · "
+    "<code>[текст](https://ссылка)</code> · строки с <code>&gt;</code> — цитата."
+)
+BROADCAST_UNSUPPORTED = (
+    "Такой тип сообщения не поддерживается. "
+    "Пришлите текст, фото, видео, файл, GIF, аудио или голосовое."
+)
+BROADCAST_ASK_BUTTONS = (
+    "🔗 <b>Кнопки</b>\n"
+    f"{SEPARATOR}\n"
+    "Добавить кнопки-ссылки под сообщением? Пришлите по одной на строку:\n"
+    "<code>Текст кнопки | https://ссылка</code>\n\n"
+    "Или нажмите «Без кнопок»."
+)
+BTN_NO_BUTTONS = "Без кнопок"
+BROADCAST_BAD_BUTTONS = "Не разобрал. Формат каждой строки: <code>Текст | https://ссылка</code>"
+BROADCAST_PREVIEW_HINT = (
+    "👀 <b>Так будет выглядеть рассылка</b> (сообщение выше)\n"
+    f"{SEPARATOR}\n"
+    "Получателей: <b>{targets}</b>\n\n"
+    "Когда отправить?"
+)
+BTN_SEND_NOW = "🚀 Прямо сейчас"
+BTN_SEND_AT = "🕒 К определённому времени"
+BTN_SEND_RECURRING = "🔁 Циклично"
+BROADCAST_ASK_DATETIME = (
+    "🕒 <b>Когда отправить?</b>\n"
+    f"{SEPARATOR}\n"
+    "Пришлите дату и время: <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n"
+    "или просто <code>ЧЧ:ММ</code> — на сегодня (если время прошло — на завтра).\n"
+    "Часовой пояс: {tz}"
+)
+BROADCAST_BAD_DATETIME = "Не разобрал или время уже прошло. Пример: <code>15.09.2026 18:30</code>"
+BROADCAST_PICK_DAYS = (
+    "🔁 <b>В какие дни повторять?</b>\n"
+    f"{SEPARATOR}\n"
+    "Отметьте дни недели. Выбрано: <b>{days}</b>"
+)
+BTN_EVERY_DAY = "Каждый день"
+BROADCAST_NEED_DAYS = "Отметьте хотя бы один день"
+BROADCAST_ASK_TIME = (
+    "🕒 <b>Во сколько?</b>\n"
+    f"{SEPARATOR}\n"
+    "Пришлите время в формате <code>ЧЧ:ММ</code>. Часовой пояс: {tz}"
+)
+BROADCAST_BAD_TIME = "Нужно время в формате <code>ЧЧ:ММ</code>, например <code>09:30</code>"
+BROADCAST_SENT_NOW = (
+    "🚀 <b>Рассылка отправлена</b>\n"
+    f"{SEPARATOR}\n"
+    "Доставлено: <b>{sent}</b>\n"
+    "Не доставлено: <b>{failed}</b>{blocked_line}"
+)
+BROADCAST_BLOCKED_LINE = "\nЗаблокировали бота: <b>{blocked}</b>"
+BROADCAST_SCHEDULED = (
+    "🕒 <b>Рассылка запланирована</b>\n" f"{SEPARATOR}\n" "Отправится: <b>{when}</b> ({tz})"
+)
+BROADCAST_RECURRING_SET = (
+    "🔁 <b>Циклическая рассылка создана</b>\n"
+    f"{SEPARATOR}\n"
+    "Дни: <b>{days}</b> в <b>{time}</b> ({tz})\n"
+    "Ближайшая отправка: <b>{next}</b>"
+)
+BROADCASTS_TITLE = "📋 <b>Мои рассылки</b>"
+BROADCASTS_EMPTY_LINE = "<i>Пока нет рассылок.</i>"
+BROADCAST_ROW = "{icon} {title}"
+BROADCAST_KIND_NOW = "сразу"
+BROADCAST_KIND_ONCE = "к времени"
+BROADCAST_KIND_RECURRING = "циклично"
+BROADCAST_STATUS = {
+    "scheduled": "⏳ ожидает",
+    "paused": "⏸ на паузе",
+    "done": "✅ отправлена",
+    "cancelled": "✖️ отменена",
+}
+BROADCAST_CARD = (
+    "📨 <b>Рассылка #{id}</b>\n"
+    f"{SEPARATOR}\n"
+    "Тип: <b>{kind}</b> · {status}\n"
+    "Получатели: {targets}\n"
+    "{schedule_line}"
+    "Отправок: <b>{runs}</b> · доставлено: <b>{sent}</b> · не доставлено: <b>{failed}</b>\n"
+    "Последняя отправка: {last_run}\n\n"
+    "<i>Текст: {snippet}</i>"
+)
+BROADCAST_SCHEDULE_ONCE = "Когда: <b>{when}</b> ({tz})\n"
+BROADCAST_SCHEDULE_RECURRING = (
+    "Расписание: <b>{days}</b> в <b>{time}</b> ({tz}), ближайшая: <b>{next}</b>\n"
+)
+BTN_BROADCAST_PAUSE = "⏸ Пауза"
+BTN_BROADCAST_RESUME = "▶️ Возобновить"
+BTN_BROADCAST_RUN_NOW = "🚀 Отправить сейчас"
+BTN_BROADCAST_DELETE = "🗑 Удалить"
+BTN_BROADCAST_PREVIEW = "👀 Показать сообщение"
+BROADCAST_DELETED = "Рассылка удалена"
+BROADCAST_PAUSED = "Рассылка на паузе"
+BROADCAST_RESUMED = "Рассылка возобновлена"
+BROADCAST_NOT_FOUND = "Рассылка не найдена"
+BROADCAST_RUNNING = "Отправляю…"
+
 # --- owner admin menu (/admin, OWNER_IDS only) ---
 BTN_ADMIN = "🛠 Админ"
 BTN_ADMIN_CHANNELS = "📣 Каналы"
