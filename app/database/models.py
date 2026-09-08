@@ -58,6 +58,8 @@ class User(Base):
     # "Визуализация меню": True = buttons embedded in the message as rich
     # blocks (new style), False = classic inline keyboard below the message.
     rich_buttons_enabled: Mapped[bool] = mapped_column(default=True)
+    # What gets appended to a post marked as advertising; NULL = «#реклама».
+    ad_label: Mapped[str | None] = mapped_column(String(64))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -233,6 +235,22 @@ class MemberSnapshot(Base):
     chat_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     local_day: Mapped[date] = mapped_column(Date, primary_key=True)
     member_count: Mapped[int] = mapped_column()
+
+
+class AdPost(Base):
+    """A post the admin marked as advertising. Kept apart from
+    message_events so the hot write path stays untouched, and so the
+    statistics can answer the question an admin who sells ads actually
+    has: what did this cost me in subscribers?"""
+
+    __tablename__ = "ad_posts"
+    __table_args__ = (Index("ix_ad_posts_chat_day", "chat_tg_id", "local_day"),)
+
+    chat_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    local_day: Mapped[date] = mapped_column(Date)
+    broadcast_id: Mapped[int | None] = mapped_column()
 
 
 class PostReaction(Base):

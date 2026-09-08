@@ -122,6 +122,11 @@ class FakeBot:
         self.restrictions.append((chat_id, user_id, kwargs.get("permissions")))
         return True
 
+    async def pin_chat_message(self, chat_id: int, message_id: int, **kwargs: Any) -> bool:
+        self._record("pin_chat_message", chat_id=chat_id, message_id=message_id, **kwargs)
+        self._maybe_fail("pin_chat_message")
+        return True
+
     async def approve_chat_join_request(self, chat_id: int, user_id: int, **kwargs: Any) -> bool:
         self._record("approve_chat_join_request", chat_id=chat_id, user_id=user_id)
         self._maybe_fail("approve_chat_join_request")

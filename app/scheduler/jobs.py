@@ -63,12 +63,12 @@ async def job_purge_stats() -> None:
     logger.info("purged %d events, %d word rows, %d join requests", events, words, requests)
 
 
-async def job_run_due_broadcasts(bot: Bot) -> None:
+async def job_run_due_broadcasts(bot: Bot, cache: Cache) -> None:
     async with async_session_factory() as session:
         due = await broadcast_service.due_broadcasts(session)
         for broadcast in due:
             try:
-                await broadcast_delivery.run_broadcast(session, bot, broadcast)
+                await broadcast_delivery.run_broadcast(session, bot, broadcast, cache)
             except Exception:  # noqa: BLE001 — one broken broadcast must not block the rest
                 logger.exception("broadcast %s failed", broadcast.id)
                 broadcast_service.advance_after_run(broadcast)
@@ -97,7 +97,7 @@ def setup_scheduler(bot: Bot, cache: Cache) -> AsyncIOScheduler:
     scheduler.add_job(
         job_run_due_broadcasts,
         IntervalTrigger(seconds=30),
-        args=[bot],
+        args=[bot, cache],
         id="run_broadcasts",
         max_instances=1,
         coalesce=True,

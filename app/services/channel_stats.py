@@ -12,9 +12,16 @@ from sqlalchemy import case, func, select
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Chat, MemberEvent, MemberSnapshot, MessageEvent, PostReaction
+from app.database.models import (
+    AdPost,
+    Chat,
+    MemberEvent,
+    MemberSnapshot,
+    MessageEvent,
+    PostReaction,
+)
 from app.services import stats_service
-from app.utils import localize
+from app.utils import ensure_aware, localize
 
 JOIN = "join"
 LEAVE = "leave"
@@ -58,6 +65,28 @@ async def snapshot_member_count(
         index_elements=["chat_tg_id", "local_day"], set_={"member_count": count}
     )
     await session.execute(stmt)
+    await session.commit()
+
+
+async def record_ad_post(
+    session: AsyncSession,
+    chat: Chat,
+    message_id: int,
+    *,
+    broadcast_id: int | None = None,
+    at: datetime | None = None,
+) -> None:
+    at = at or datetime.now(UTC)
+    local_day, _ = localize(at, chat.timezone)
+    insert = _insert_for(session)
+    stmt = insert(AdPost).values(
+        chat_tg_id=chat.telegram_id,
+        message_id=message_id,
+        posted_at=at,
+        local_day=local_day,
+        broadcast_id=broadcast_id,
+    )
+    await session.execute(stmt.on_conflict_do_nothing(index_elements=["chat_tg_id", "message_id"]))
     await session.commit()
 
 
@@ -231,6 +260,79 @@ async def daily_rows(
         j, l_ = flows.get(day, [0, 0])
         out.append(DayRow(day, snapshots.get(day), j, l_, int(posts.get(day, 0))))
     return out
+
+
+@dataclass(frozen=True)
+class AdSummary:
+    posts: int
+    avg_reactions: float
+    avg_reactions_other: float
+    # Subscribers who left within LEAVE_WINDOW of an ad going out. Not
+    # proof of cause, but it is the number an admin selling ads wants.
+    leaves_after: int
+
+
+LEAVE_WINDOW = timedelta(days=1)
+
+
+async def ad_summary(
+    session: AsyncSession, chat_tg_id: int, day_from: date, day_to: date
+) -> AdSummary:
+    ads = (
+        await session.execute(
+            select(AdPost.message_id, AdPost.posted_at).where(
+                AdPost.chat_tg_id == chat_tg_id,
+                AdPost.local_day >= day_from,
+                AdPost.local_day <= day_to,
+            )
+        )
+    ).all()
+    if not ads:
+        return AdSummary(0, 0.0, 0.0, 0)
+    ad_ids = {int(m) for m, _ in ads}
+
+    totals = dict(
+        (
+            await session.execute(
+                select(PostReaction.message_id, PostReaction.total)
+                .join(
+                    MessageEvent,
+                    (MessageEvent.chat_tg_id == PostReaction.chat_tg_id)
+                    & (MessageEvent.message_id == PostReaction.message_id),
+                )
+                .where(
+                    PostReaction.chat_tg_id == chat_tg_id,
+                    MessageEvent.local_day >= day_from,
+                    MessageEvent.local_day <= day_to,
+                )
+            )
+        ).all()
+    )
+    posts_total = await posts_count(session, chat_tg_id, day_from, day_to)
+    ad_reactions = sum(int(t) for m, t in totals.items() if int(m) in ad_ids)
+    other_reactions = sum(int(t) for m, t in totals.items() if int(m) not in ad_ids)
+    others = max(0, posts_total - len(ad_ids))
+
+    leaves = 0
+    for _, posted_at in ads:
+        start = ensure_aware(posted_at)
+        leaves += int(
+            await session.scalar(
+                select(func.count()).where(
+                    MemberEvent.chat_tg_id == chat_tg_id,
+                    MemberEvent.kind == LEAVE,
+                    MemberEvent.at >= start,
+                    MemberEvent.at <= start + LEAVE_WINDOW,
+                )
+            )
+            or 0
+        )
+    return AdSummary(
+        posts=len(ad_ids),
+        avg_reactions=ad_reactions / len(ad_ids),
+        avg_reactions_other=(other_reactions / others) if others else 0.0,
+        leaves_after=leaves,
+    )
 
 
 def post_link(chat: Chat, message_id: int) -> str:

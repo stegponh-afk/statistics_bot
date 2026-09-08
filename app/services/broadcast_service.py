@@ -2,7 +2,7 @@
 Delivery lives in broadcast_delivery."""
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -42,12 +42,26 @@ class Content:
     # None when `entities` carry the formatting the admin applied in Telegram.
     parse_mode: str | None = None
 
+    # How the post is delivered. These live here rather than in their own
+    # columns so they travel with the stored content, and so rows written
+    # before they existed simply fall back to the defaults below.
+    silent: bool = False  # published without a notification
+    pin: bool = False  # pinned right after publishing
+    protect: bool = False  # forwarding and saving forbidden
+    # False removes the copy Telegram auto-forwards into the discussion
+    # group, which is what takes the «Комментарии» button off a channel
+    # post — there is no per-post flag for it.
+    comments: bool = True
+    is_ad: bool = False  # gets the admin's ad label and is counted apart
+
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "Content":
-        return cls(**data)
+        # Unknown keys would mean a downgrade; missing ones are just old rows.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     def message_entities(self) -> list[MessageEntity] | None:
         if not self.entities:

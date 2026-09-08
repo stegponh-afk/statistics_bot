@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache import Cache
 from app.database.models import Broadcast, BroadcastKind, BroadcastStatus, Chat, User
 from app.services import broadcast_delivery, broadcast_service, chat_service
 from app.services.broadcast_service import (
@@ -47,6 +48,7 @@ class BroadcastNew(StatesGroup):
     message = State()
     buttons = State()
     schedule = State()
+    ad_label = State()
     datetime = State()
     days = State()
     time = State()
@@ -285,26 +287,156 @@ async def _comments_note(bot, session: AsyncSession, chat_ids: list[int]) -> str
     return note
 
 
+# Per-post switches on the preview screen: FSM key -> (label off, label on).
+OPTIONS = {
+    "silent": (ru.BTN_OPT_SOUND_ON, ru.BTN_OPT_SOUND_OFF),
+    "pin": (ru.BTN_OPT_PIN_OFF, ru.BTN_OPT_PIN_ON),
+    "protect": (ru.BTN_OPT_PROTECT_OFF, ru.BTN_OPT_PROTECT_ON),
+    "comments": (ru.BTN_OPT_COMMENTS_OFF, ru.BTN_OPT_COMMENTS_ON),
+    "is_ad": (ru.BTN_OPT_AD_OFF, ru.BTN_OPT_AD_ON),
+}
+
+
+def _option_button(content: Content, name: str) -> Btn:
+    off, on = OPTIONS[name]
+    return Btn(on if getattr(content, name) else off, f"bc:o:{name}")
+
+
+async def preview_screen(
+    bot, session: AsyncSession, user: User, data: dict, *, has_channels: bool
+) -> Screen:
+    content = Content.from_json(data["content"])
+    chat_ids = list(data.get("chats", []))
+    text = ru.BROADCAST_PREVIEW_HINT.format(
+        targets=len(chat_ids), comments=await _comments_note(bot, session, chat_ids)
+    )
+    if content.is_ad:
+        text += ru.BROADCAST_AD_NOTE.format(label=broadcast_delivery.ad_label_of(user))
+    rows = [
+        [_option_button(content, "silent"), _option_button(content, "pin")],
+        [_option_button(content, "protect"), _option_button(content, "is_ad")],
+    ]
+    # A channel post gets comments from its discussion group; in a group
+    # the switch would mean nothing, so it is only offered when it can act.
+    if has_channels:
+        rows.append([_option_button(content, "comments")])
+    if content.is_ad:
+        rows.append([Btn(ru.BTN_AD_LABEL_EDIT, "bc:adlabel")])
+    rows += [
+        [Btn(ru.BTN_SEND_NOW, "bc:now", STYLE_SUCCESS)],
+        [Btn(ru.BTN_SEND_AT, "bc:at")],
+        [Btn(ru.BTN_SEND_RECURRING, "bc:rec")],
+        [Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)],
+    ]
+    return Screen(text, rows=rows)
+
+
+async def _has_channel_target(session: AsyncSession, chat_ids: list[int]) -> bool:
+    if not chat_ids:
+        return False
+    return any(
+        c.is_channel for c in await session.scalars(select(Chat).where(Chat.id.in_(chat_ids)))
+    )
+
+
 async def _show_preview(
     chat_id: int, bot, session: AsyncSession, user: User, state: FSMContext
 ) -> None:
     data = await state.get_data()
     content = Content.from_json(data["content"])
     await broadcast_delivery.send_content(bot, chat_id, content, content.file_id)
-    chat_ids = list(data.get("chats", []))
-    screen = Screen(
-        ru.BROADCAST_PREVIEW_HINT.format(
-            targets=len(chat_ids), comments=await _comments_note(bot, session, chat_ids)
-        ),
-        rows=[
-            [Btn(ru.BTN_SEND_NOW, "bc:now", STYLE_SUCCESS)],
-            [Btn(ru.BTN_SEND_AT, "bc:at")],
-            [Btn(ru.BTN_SEND_RECURRING, "bc:rec")],
-            [Btn(ru.BTN_CANCEL, "bc:menu", STYLE_DANGER)],
-        ],
+    screen = await preview_screen(
+        bot,
+        session,
+        user,
+        data,
+        has_channels=await _has_channel_target(session, list(data.get("chats", []))),
     )
     await state.set_state(BroadcastNew.schedule)
     await send(bot, chat_id, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(BroadcastNew.schedule, F.data.regexp(r"^bc:o:(\w+)$"))
+async def cb_toggle_option(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    name = callback.data.rsplit(":", 1)[1]
+    if name not in OPTIONS:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    data["content"][name] = not data["content"].get(name, name == "comments")
+    await state.set_data(data)
+    screen = await preview_screen(
+        callback.bot,
+        session,
+        user,
+        data,
+        has_channels=await _has_channel_target(session, list(data.get("chats", []))),
+    )
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(BroadcastNew.schedule, F.data == "bc:adlabel")
+async def cb_ad_label(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    await state.set_state(BroadcastNew.ad_label)
+    screen = Screen(
+        ru.BROADCAST_ASK_AD_LABEL.format(
+            current=broadcast_delivery.ad_label_of(user),
+            default=broadcast_delivery.DEFAULT_AD_LABEL,
+        ),
+        rows=[[Btn(ru.BTN_CANCEL, "bc:adlabel:back", STYLE_DANGER)]],
+    )
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(BroadcastNew.ad_label, F.data == "bc:adlabel:back")
+async def cb_ad_label_back(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    await state.set_state(BroadcastNew.schedule)
+    screen = await preview_screen(
+        callback.bot,
+        session,
+        user,
+        data,
+        has_channels=await _has_channel_target(session, list(data.get("chats", []))),
+    )
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.message(BroadcastNew.ad_label, F.text)
+async def on_ad_label(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        return
+    label = message.text.strip()
+    if len(label) > 64:
+        await message.answer(ru.BROADCAST_AD_LABEL_TOO_LONG)
+        return
+    user.ad_label = label
+    await session.commit()
+    data = await state.get_data()
+    await state.set_state(BroadcastNew.schedule)
+    screen = await preview_screen(
+        message.bot,
+        session,
+        user,
+        data,
+        has_channels=await _has_channel_target(session, list(data.get("chats", []))),
+    )
+    await send(message.bot, message.chat.id, screen, rich_buttons=_rich(user))
 
 
 @router.message(BroadcastNew.buttons, F.text)
@@ -364,14 +496,18 @@ def _sent_screen(result: broadcast_delivery.RunResult) -> Screen:
 
 @router.callback_query(BroadcastNew.schedule, F.data == "bc:now")
 async def cb_send_now(
-    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+    callback: CallbackQuery,
+    session: AsyncSession,
+    cache: Cache,
+    user: User | None,
+    state: FSMContext,
 ) -> None:
     if user is None:
         await callback.answer()
         return
     await callback.answer(ru.BROADCAST_RUNNING)
     broadcast = await _create(session, user, state, BroadcastKind.NOW)
-    result = await broadcast_delivery.run_broadcast(session, callback.bot, broadcast)
+    result = await broadcast_delivery.run_broadcast(session, callback.bot, broadcast, cache)
     await respond(callback, _sent_screen(result), rich_buttons=_rich(user))
 
 
@@ -543,7 +679,9 @@ async def cb_pause_resume(
 
 
 @router.callback_query(F.data.regexp(r"^bc:(\d+):run$"))
-async def cb_run_now(callback: CallbackQuery, session: AsyncSession, user: User | None) -> None:
+async def cb_run_now(
+    callback: CallbackQuery, session: AsyncSession, cache: Cache, user: User | None
+) -> None:
     if user is None:
         await callback.answer()
         return
@@ -552,7 +690,7 @@ async def cb_run_now(callback: CallbackQuery, session: AsyncSession, user: User 
         return
     await callback.answer(ru.BROADCAST_RUNNING)
     status_before = b.status
-    result = await broadcast_delivery.run_broadcast(session, callback.bot, b)
+    result = await broadcast_delivery.run_broadcast(session, callback.bot, b, cache)
     if b.kind == BroadcastKind.RECURRING.value and status_before == BroadcastStatus.PAUSED.value:
         b.status = BroadcastStatus.PAUSED.value
         await session.commit()

@@ -8,6 +8,7 @@ from app.cache import Cache
 from app.filters.chat_type import CB_GROUP, CB_PRIVATE, CHANNEL, GROUP, PRIVATE
 from app.handlers import join_requests
 from app.handlers.channel import membership as channel_membership
+from app.handlers.group import auto_forward as group_auto_forward
 from app.handlers.group import commands as group_commands
 from app.handlers.group import gate_callbacks as group_gate
 from app.handlers.group import membership as group_membership
@@ -66,6 +67,7 @@ def build_router(cache: Cache) -> Router:
     # can swallow a message before it is ever logged.
     group_router.message.outer_middleware(ForceSubGateMiddleware(cache))
     group_router.message.outer_middleware(StatsLogMiddleware())
+    group_router.include_router(group_auto_forward.router)
     group_router.include_router(group_membership.router)
     group_router.include_router(group_commands.router)
     group_router.include_router(group_stats.router)

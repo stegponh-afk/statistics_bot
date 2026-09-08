@@ -205,6 +205,18 @@ async def channel_overview_screen(
         comments_line=comments_line,
         tz=_tz_name(chat),
     )
+    ads = await channel_stats.ad_summary(
+        session, chat.telegram_id, today - timedelta(days=29), today
+    )
+    if ads.posts:
+        # Shown only once there is advertising to talk about: an empty block
+        # would be noise on a channel that sells nothing.
+        text += ru.STATS_ADS_BLOCK.format(
+            posts=ads.posts,
+            avg=f"{ads.avg_reactions:.1f}",
+            avg_other=f"{ads.avg_reactions_other:.1f}",
+            leaves=ads.leaves_after,
+        )
     return Screen(
         text,
         rows=_tab_rows(target, "overview", back, CHANNEL_TABS),
