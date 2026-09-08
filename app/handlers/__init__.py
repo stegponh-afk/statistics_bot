@@ -9,8 +9,10 @@ from app.filters.chat_type import CB_GROUP, CB_PRIVATE, CHANNEL, GROUP, PRIVATE
 from app.handlers.channel import membership as channel_membership
 from app.handlers.group import commands as group_commands
 from app.handlers.group import membership as group_membership
+from app.handlers.group import stats_callbacks as group_stats
+from app.handlers.private import chat_panel, my_chats, settings, start
 from app.handlers.private import help as private_help
-from app.handlers.private import my_chats, settings, start
+from app.middlewares.stats_log import StatsLogMiddleware
 
 
 def build_router(cache: Cache) -> Router:
@@ -21,17 +23,23 @@ def build_router(cache: Cache) -> Router:
     private_router.callback_query.filter(CB_PRIVATE)
     private_router.include_router(start.router)
     private_router.include_router(my_chats.router)
+    private_router.include_router(chat_panel.router)
     private_router.include_router(settings.router)
     private_router.include_router(private_help.router)
 
     group_router = Router(name="group")
     group_router.message.filter(GROUP)
     group_router.callback_query.filter(CB_GROUP)
+    # Outer middlewares run before any handler filter, for every message
+    # that reaches this router — first registered runs first.
+    group_router.message.outer_middleware(StatsLogMiddleware())
     group_router.include_router(group_membership.router)
     group_router.include_router(group_commands.router)
+    group_router.include_router(group_stats.router)
 
     channel_router = Router(name="channel")
     channel_router.channel_post.filter(CHANNEL)
+    channel_router.channel_post.outer_middleware(StatsLogMiddleware())
     channel_router.include_router(channel_membership.router)
 
     root.include_router(private_router)

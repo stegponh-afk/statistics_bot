@@ -108,3 +108,47 @@ BTN_CHAT_FORCESUB_ON = "🔒 Обязательная подписка: ВКЛ"
 BTN_CHAT_FORCESUB_OFF = "🔓 Обязательная подписка: ВЫКЛ"
 BTN_CHAT_CHANNELS = "📣 Каналы ({count})"
 BTN_CHAT_WHITELIST = "👤 Белый список ({count})"
+
+# --- statistics ---
+STATS_TITLE = "📊 <b>Статистика: {title}</b>"
+STATS_OVERVIEW = (
+    "📊 <b>Статистика: {title}</b>\n"
+    f"{SEPARATOR}\n"
+    "Сообщений сегодня: <b>{today}</b>\n"
+    "За 7 дней: <b>{week}</b>\n"
+    "За 30 дней: <b>{month}</b>\n"
+    "Активных участников за 7 дней: <b>{active_week}</b>\n"
+    "{members_line}"
+    "\n<i>Часовой пояс: {tz}</i>"
+)
+STATS_TOP_USERS_TITLE = "👥 <b>Самые активные за 7 дней</b>"
+STATS_TOP_WORDS_TITLE = "🔤 <b>Популярные слова за 7 дней</b>"
+STATS_HOURS_TITLE = "🕒 <b>Активность по часам за 7 дней</b>"
+STATS_EMPTY = "Пока нет данных — бот считает сообщения с момента добавления в чат."
+STATS_ONLY_FOR_ADMINS = (
+    "🔒 <b>Только для администраторов</b>\n"
+    "Статистику чата могут смотреть его администраторы. "
+    "Ваша личная активность — команда /me."
+)
+STATS_ONLY_FOR_ADMINS_TOAST = "Только для администраторов чата"
+STATS_HOURS_ROW = "<code>{label}</code> {bar} {count}"
+STATS_USER_ROW = "{medal} {name} — <b>{count}</b>"
+STATS_WORD_ROW = "{n}. {word} — <b>{count}</b>"
+
+BTN_STATS_OVERVIEW = "📊 Обзор"
+BTN_STATS_USERS = "👥 Топ-5"
+BTN_STATS_WORDS = "🔤 Слова"
+BTN_STATS_HOURS = "🕒 Часы"
+
+ME_TITLE = "👤 <b>Ваша активность</b>"
+ME_BODY = (
+    "👤 <b>Ваша активность</b>\n"
+    f"{SEPARATOR}\n"
+    "Чат: <b>{title}</b>\n\n"
+    "Сегодня: <b>{today}</b>\n"
+    "За 7 дней: <b>{week}</b>{rank_line}\n"
+    "За 30 дней: <b>{month}</b>\n\n"
+    "<i>Это сообщение видите только вы.</i>"
+)
+ME_RANK_LINE = " · место <b>#{rank}</b> из {active}"
+ME_NO_USER = "Не удалось определить отправителя (анонимный режим?)."

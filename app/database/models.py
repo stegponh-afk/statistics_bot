@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     SmallInteger,
     String,
     Text,
@@ -192,7 +193,9 @@ class MessageEvent(Base):
         Index("ix_message_events_sent_at", "sent_at"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
     chat_tg_id: Mapped[int] = mapped_column(BigInteger)
     # NULL for channel posts and messages sent on behalf of a chat
     # (anonymous admins, linked-channel auto-forwards).
