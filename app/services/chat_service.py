@@ -347,6 +347,28 @@ async def get_member_count(bot: Bot, session: AsyncSession, chat: Chat) -> int |
     return count
 
 
+async def refresh_chat_flags(bot: Bot, session: AsyncSession, chat: Chat) -> Chat:
+    """Re-reads the settings of the chat itself (not the bot's rights):
+    whether it asks for join requests, and which group holds its comments.
+    Both are things the admin changes in Telegram, where the bot gets no
+    notification — so the screens that depend on them have to ask."""
+    try:
+        info = await bot.get_chat(chat.telegram_id)
+    except (TelegramBadRequest, TelegramForbiddenError):
+        return chat
+    changed = False
+    for attr, value in (
+        ("join_by_request", bool(info.join_by_request)),
+        ("linked_chat_tg_id", info.linked_chat_id),
+    ):
+        if getattr(chat, attr) != value:
+            setattr(chat, attr, value)
+            changed = True
+    if changed:
+        await session.commit()
+    return chat
+
+
 async def resolve_linked_group(
     bot: Bot, session: AsyncSession, channel: Chat, *, refresh: bool = False
 ) -> Chat | None:
@@ -354,13 +376,7 @@ async def resolve_linked_group(
     only if the bot is in that group; None if the channel has no
     discussion group or the bot hasn't been added to it."""
     if refresh or channel.linked_chat_tg_id is None:
-        try:
-            info = await bot.get_chat(channel.telegram_id)
-        except (TelegramBadRequest, TelegramForbiddenError):
-            return None
-        if info.linked_chat_id != channel.linked_chat_tg_id:
-            channel.linked_chat_tg_id = info.linked_chat_id
-            await session.commit()
+        await refresh_chat_flags(bot, session, channel)
     if channel.linked_chat_tg_id is None:
         return None
     group = await get_chat_by_telegram_id(session, channel.linked_chat_tg_id)

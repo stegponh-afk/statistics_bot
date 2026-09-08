@@ -17,10 +17,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Broadcast, BroadcastKind, BroadcastStatus, Chat, User
-from app.services import broadcast_delivery, broadcast_service
+from app.services import broadcast_delivery, broadcast_service, chat_service
 from app.services.broadcast_service import (
     WEEKDAY_LABELS,
     Content,
@@ -258,13 +259,43 @@ async def on_message_content(message: Message, user: User | None, state: FSMCont
     await send(message.bot, message.chat.id, screen, rich_buttons=_rich(user))
 
 
-async def _show_preview(chat_id: int, bot, user: User, state: FSMContext) -> None:
+async def _comments_note(bot, session: AsyncSession, chat_ids: list[int]) -> str:
+    """Comments under a channel post belong to the channel, not to the post:
+    they appear when a discussion group is attached and cannot be switched
+    per message. So the preview says what will happen and how to change it,
+    instead of offering a switch that does not exist."""
+    if not chat_ids:
+        return ""
+    channels = [
+        c for c in await session.scalars(select(Chat).where(Chat.id.in_(chat_ids))) if c.is_channel
+    ]
+    if not channels:
+        return ""
+    with_comments: list[str] = []
+    without: list[str] = []
+    for channel in channels:
+        await chat_service.refresh_chat_flags(bot, session, channel)
+        title = channel.title or str(channel.telegram_id)
+        (with_comments if channel.linked_chat_tg_id else without).append(title)
+    note = ""
+    if with_comments:
+        note += ru.BROADCAST_COMMENTS_ON.format(titles=", ".join(with_comments))
+    if without:
+        note += ru.BROADCAST_COMMENTS_OFF.format(titles=", ".join(without))
+    return note
+
+
+async def _show_preview(
+    chat_id: int, bot, session: AsyncSession, user: User, state: FSMContext
+) -> None:
     data = await state.get_data()
     content = Content.from_json(data["content"])
     await broadcast_delivery.send_content(bot, chat_id, content, content.file_id)
-    targets = len(data.get("chats", []))
+    chat_ids = list(data.get("chats", []))
     screen = Screen(
-        ru.BROADCAST_PREVIEW_HINT.format(targets=targets),
+        ru.BROADCAST_PREVIEW_HINT.format(
+            targets=len(chat_ids), comments=await _comments_note(bot, session, chat_ids)
+        ),
         rows=[
             [Btn(ru.BTN_SEND_NOW, "bc:now", STYLE_SUCCESS)],
             [Btn(ru.BTN_SEND_AT, "bc:at")],
@@ -277,7 +308,9 @@ async def _show_preview(chat_id: int, bot, user: User, state: FSMContext) -> Non
 
 
 @router.message(BroadcastNew.buttons, F.text)
-async def on_buttons(message: Message, user: User | None, state: FSMContext) -> None:
+async def on_buttons(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
     if user is None:
         return
     buttons = parse_buttons(message.text)
@@ -289,16 +322,18 @@ async def on_buttons(message: Message, user: User | None, state: FSMContext) -> 
     data = await state.get_data()
     data["content"]["buttons"] = buttons
     await state.set_data(data)
-    await _show_preview(message.chat.id, message.bot, user, state)
+    await _show_preview(message.chat.id, message.bot, session, user, state)
 
 
 @router.callback_query(BroadcastNew.buttons, F.data == "bc:nobtn")
-async def cb_no_buttons(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
+async def cb_no_buttons(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
     if user is None:
         await callback.answer()
         return
     await callback.answer()
-    await _show_preview(callback.message.chat.id, callback.bot, user, state)
+    await _show_preview(callback.message.chat.id, callback.bot, session, user, state)
 
 
 # --- when ------------------------------------------------------------------------

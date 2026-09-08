@@ -39,6 +39,7 @@ class FakeBot:
         self.member_counts: dict[int, int] = {}
         self.invite_links: dict[int, str] = {}
         self.linked_chats: dict[int, int] = {}
+        self.join_by_request: dict[int, bool] = {}
         # method name -> Exception to raise on the next call of that method
         self.fail_next: dict[str, Exception] = {}
         # ... and on every call, for "Telegram keeps refusing this" cases
@@ -111,6 +112,7 @@ class FakeBot:
                 },
                 "invite_link": self.invite_links.get(chat_id),
                 "linked_chat_id": self.linked_chats.get(chat_id),
+                "join_by_request": self.join_by_request.get(chat_id),
             }
         )
 

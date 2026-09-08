@@ -80,6 +80,10 @@ class Chat(Base):
     invite_link: Mapped[str | None] = mapped_column(Text)
     # For channels: the discussion group (comments), from getChat.
     linked_chat_tg_id: Mapped[int | None] = mapped_column(BigInteger)
+    # Whether the chat itself is set to "join by request" (getChat). The
+    # join gate is dead weight without it — Telegram sends no request at
+    # all — so the card has to be able to say so.
+    join_by_request: Mapped[bool] = mapped_column(default=False)
     # «Награда за подписку» (channels): deep-link slug + the message
     # (broadcast_service.Content JSON) handed to verified subscribers.
     reward_slug: Mapped[str | None] = mapped_column(String(16), unique=True, index=True)

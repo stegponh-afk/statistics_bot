@@ -77,6 +77,66 @@ def _join_gate_button(chat: Chat) -> Btn:
     return Btn(label, f"chat:{chat.id}:joingate")
 
 
+def _forcesub_problem(chat: Chat, channels_count: int) -> str | None:
+    if not channels_count:
+        return ru.BLOCK_NO_CHANNELS
+    if not chat.bot_can_delete:
+        return ru.BLOCK_NO_DELETE
+    return None
+
+
+def _join_gate_problem(chat: Chat, channels_count: int) -> str | None:
+    if not channels_count:
+        return ru.BLOCK_NO_CHANNELS
+    if not chat.bot_can_invite:
+        return ru.BLOCK_NO_INVITE
+    if not chat.join_by_request:
+        # The switch in Telegram itself, which the bot is never told about.
+        return ru.BLOCK_NOT_BY_REQUEST
+    return None
+
+
+def _feature_line(name: str, problem: str | None) -> str:
+    if problem is None:
+        return ru.FEATURE_OK.format(name=name)
+    return ru.FEATURE_BLOCKED.format(name=name, problem=problem)
+
+
+def feature_lines(
+    chat: Chat, *, channels_count: int, comments: tuple[str, bool] | None
+) -> list[str]:
+    """One line per switched-on feature, saying whether it actually does
+    anything — a flag alone tells an admin nothing about why the chat
+    behaves as if the feature were off."""
+    lines: list[str] = []
+    if chat.forcesub_enabled:
+        lines.append(_feature_line(ru.FEATURE_FORCESUB, _forcesub_problem(chat, channels_count)))
+    if chat.join_gate_enabled:
+        lines.append(_feature_line(ru.FEATURE_JOINGATE, _join_gate_problem(chat, channels_count)))
+    if chat.welcome_enabled and chat.welcome_content:
+        lines.append(_feature_line(ru.FEATURE_WELCOME, None))
+    if chat.captcha_enabled:
+        lines.append(
+            _feature_line(
+                ru.FEATURE_CAPTCHA, None if chat.bot_can_restrict else ru.BLOCK_NO_RESTRICT
+            )
+        )
+    if chat.digest_enabled:
+        lines.append(
+            ru.FEATURE_DIGEST.format(
+                time=chat.digest_time,
+                period=ru.FEATURE_DIGEST_WEEKLY
+                if chat.digest_period == "weekly"
+                else ru.FEATURE_DIGEST_DAILY,
+            )
+        )
+    if chat.is_channel and chat.reward_content:
+        lines.append(_feature_line(ru.FEATURE_REWARD, None))
+    if comments is not None and comments[1]:
+        lines.append(_feature_line(ru.FEATURE_COMMENTS_GATE, None))
+    return lines
+
+
 def chat_card_screen(
     chat: Chat,
     *,
@@ -99,6 +159,8 @@ def chat_card_screen(
     )
     if comments is not None:
         text += ru.CHAT_COMMENTS_LINE.format(value=comments[0])
+    lines = feature_lines(chat, channels_count=channels_count, comments=comments)
+    text += ru.CHAT_FEATURES.format(lines="\n".join(lines) if lines else ru.CHAT_FEATURES_NONE)
     rows = [[Btn(ru.BTN_CHAT_STATS, f"chat:{chat.id}:stats")]]
     if chat.is_channel:
         rows.append(
@@ -170,6 +232,9 @@ async def render_chat_card(
 
     if refresh:
         await chat_service.refresh_bot_membership(bot, session, chat)
+        # The admin may have flipped "join by request" (or attached a
+        # discussion group) in Telegram, which raises no update at all.
+        await chat_service.refresh_chat_flags(bot, session, chat)
     member_count = (
         await chat_service.get_member_count(bot, session, chat) if chat.is_active else None
     )

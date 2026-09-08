@@ -169,9 +169,15 @@ async def cb_join_gate_toggle(
         if not chat.bot_can_invite:
             await callback.answer(ru.JOIN_GATE_NEED_INVITE_RIGHT, show_alert=True)
             return
+        await chat_service.refresh_chat_flags(callback.bot, session, chat)
         chat.join_gate_enabled = True
         await session.commit()
-        await callback.answer(ru.JOIN_GATE_ENABLED)
+        # Switched on, but Telegram will send nothing until the chat itself
+        # asks people to apply — say so now rather than let them wonder.
+        if chat.join_by_request:
+            await callback.answer(ru.JOIN_GATE_ENABLED)
+        else:
+            await callback.answer(ru.JOIN_GATE_ENABLED_BUT_FREE, show_alert=True)
 
     screen = await render_chat_card(callback.bot, session, chat)
     await respond(callback, screen, rich_buttons=user.rich_buttons_enabled)
