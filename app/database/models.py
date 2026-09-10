@@ -377,6 +377,33 @@ class BroadcastDraft(Base):
     )
 
 
+class BroadcastMessage(Base):
+    """Every message the bot published, so it can still be edited, deleted
+    or counted afterwards. Keyed by raw Telegram ids and without a foreign
+    key to broadcasts, like the other write-hot tables: a post outlives the
+    broadcast row that produced it.
+
+    `delete_at` and `delete_after_reactions` are the two auto-delete
+    triggers; both are cleared once the post is gone, or when Telegram
+    refuses the deletion for good (no rights, message too old) — a trigger
+    that cannot fire must not be retried forever.
+    """
+
+    __tablename__ = "broadcast_messages"
+    __table_args__ = (
+        Index("ix_broadcast_messages_broadcast", "broadcast_id"),
+        Index("ix_broadcast_messages_due", "delete_at"),
+    )
+
+    chat_tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    broadcast_id: Mapped[int | None] = mapped_column()
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    delete_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delete_after_reactions: Mapped[int | None] = mapped_column()
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ApiKeyChannel(Base):
     __tablename__ = "api_key_channels"
 

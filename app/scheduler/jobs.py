@@ -15,6 +15,7 @@ from app.services import (
     chat_service,
     digest_service,
     join_request_service,
+    post_service,
     stats_service,
 )
 from config import settings
@@ -75,6 +76,16 @@ async def job_run_due_broadcasts(bot: Bot, cache: Cache) -> None:
                 await session.commit()
 
 
+async def job_delete_expired_posts(bot: Bot) -> None:
+    """Posts the admin asked to disappear after a while. The other
+    auto-delete trigger (a number of reactions) fires from the reaction
+    update itself, so it needs no sweep."""
+    async with async_session_factory() as session:
+        deleted = await post_service.delete_due(session=session, bot=bot)
+    if deleted:
+        logger.info("auto-deleted %d posts", deleted)
+
+
 async def job_send_digests(bot: Bot) -> None:
     """Every few minutes: chats whose local report time has come today."""
     async with async_session_factory() as session:
@@ -99,6 +110,14 @@ def setup_scheduler(bot: Bot, cache: Cache) -> AsyncIOScheduler:
         IntervalTrigger(seconds=30),
         args=[bot, cache],
         id="run_broadcasts",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        job_delete_expired_posts,
+        IntervalTrigger(seconds=60),
+        args=[bot],
+        id="delete_expired_posts",
         max_instances=1,
         coalesce=True,
     )

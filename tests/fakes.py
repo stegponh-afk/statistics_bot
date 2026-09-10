@@ -200,6 +200,16 @@ class FakeBot:
         self._maybe_fail("delete_message")
         return True
 
+    async def edit_message_text(self, **kwargs: Any) -> bool:
+        self._record("edit_message_text", **kwargs)
+        self._maybe_fail("edit_message_text")
+        return True
+
+    async def edit_message_caption(self, **kwargs: Any) -> bool:
+        self._record("edit_message_caption", **kwargs)
+        self._maybe_fail("edit_message_caption")
+        return True
+
     async def answer_callback_query(self, callback_query_id: str, **kwargs: Any) -> bool:
         self._record("answer_callback_query", callback_query_id=callback_query_id, **kwargs)
         return True

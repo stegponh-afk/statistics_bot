@@ -11,8 +11,13 @@ on a weekly schedule; list and manage existing broadcasts.
   bc:now | bc:at | bc:rec  choose when
   bc:d:{0..6} | bc:d:all | bc:d:next   weekday toggles for recurring
   bc:list                  my broadcasts
+  bc:autodel | bc:autodelr auto-delete by time / by reactions
   bc:{id}                  one broadcast; :preview :pause :resume :run :del
+                           :edit rewrite the published post
+                           :delposts take it down everywhere
 """
+
+from dataclasses import replace
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -31,15 +36,17 @@ from app.database.models import (
     Chat,
     User,
 )
-from app.services import broadcast_delivery, broadcast_service, chat_service
+from app.services import broadcast_delivery, broadcast_service, chat_service, post_service
 from app.services.broadcast_service import (
     WEEKDAY_LABELS,
     Content,
     content_from_message,
     format_days,
+    format_duration,
     format_local,
     parse_buttons,
     parse_datetime,
+    parse_duration,
     parse_time,
 )
 from app.services.chat_service import list_admin_chats
@@ -47,6 +54,7 @@ from app.texts import ru
 from app.ui import Btn, Screen, respond, send
 from app.ui.blocks import strip_tags
 from app.ui.buttons import STYLE_DANGER, STYLE_PRIMARY, STYLE_SUCCESS
+from app.utils import pluralize
 from config import settings
 
 router = Router(name="broadcast")
@@ -58,6 +66,8 @@ class BroadcastNew(StatesGroup):
     buttons = State()
     schedule = State()
     ad_label = State()
+    autodelete = State()
+    autodelete_reactions = State()
     datetime = State()
     days = State()
     time = State()
@@ -207,7 +217,20 @@ async def card_screen(session: AsyncSession, b: Broadcast) -> Screen:
         last_run=format_local(b.last_run_at, b.timezone),
         snippet=_snippet(Content.from_json(b.content)),
     )
+    posts = await post_service.stats(session, b.id)
+    if posts.published or posts.deleted:
+        text += ru.BROADCAST_CARD_POSTS.format(
+            published=posts.published, deleted=posts.deleted, reactions=posts.reactions
+        )
     rows = [[Btn(ru.BTN_BROADCAST_PREVIEW, f"bc:{b.id}:preview")]]
+    # Only a post that is still standing can be rewritten or taken down.
+    if posts.published:
+        rows.append(
+            [
+                Btn(ru.BTN_POST_EDIT, f"bc:{b.id}:edit"),
+                Btn(ru.BTN_POST_DELETE, f"bc:{b.id}:delposts", STYLE_DANGER),
+            ]
+        )
     if b.status == BroadcastStatus.SCHEDULED.value and b.kind != BroadcastKind.NOW.value:
         rows.append([Btn(ru.BTN_BROADCAST_PAUSE, f"bc:{b.id}:pause")])
     elif b.status == BroadcastStatus.PAUSED.value:
@@ -497,19 +520,94 @@ def _option_button(content: Content, name: str) -> Btn:
     return Btn(on if getattr(content, name) else off, f"bc:o:{name}")
 
 
+# Auto-delete presets, in minutes, and the reaction counts offered as
+# ready-made answers next to «своё число».
+AUTODELETE_PRESETS = (60, 6 * 60, 24 * 60, 3 * 24 * 60, 7 * 24 * 60)
+REACTION_PRESETS = (50, 100, 500, 1000)
+MAX_REACTION_TRIGGER = 1_000_000
+
+
+def _autodelete_buttons(content: Content) -> list[Btn]:
+    minutes, count = content.autodelete_after, content.autodelete_reactions
+    return [
+        Btn(
+            ru.BTN_OPT_AUTODELETE_ON.format(when=format_duration(minutes))
+            if minutes
+            else ru.BTN_OPT_AUTODELETE_OFF,
+            "bc:autodel",
+        ),
+        Btn(
+            ru.BTN_OPT_AUTODELETE_R_ON.format(count=count)
+            if count
+            else ru.BTN_OPT_AUTODELETE_R_OFF,
+            "bc:autodelr",
+        ),
+    ]
+
+
+def _autodelete_note(content: Content) -> str:
+    """Two triggers, whichever comes first — said in those words, because
+    «удалится через час ИЛИ на 100 реакциях» is not obvious."""
+    conditions = []
+    if content.autodelete_after:
+        conditions.append(
+            ru.BROADCAST_AUTODELETE_BY_TIME.format(when=format_duration(content.autodelete_after))
+        )
+    if content.autodelete_reactions:
+        conditions.append(
+            ru.BROADCAST_AUTODELETE_BY_REACTIONS.format(
+                count=f"{content.autodelete_reactions} "
+                + pluralize(content.autodelete_reactions, "реакцию", "реакции", "реакций")
+            )
+        )
+    if not conditions:
+        return ""
+    return ru.BROADCAST_AUTODELETE_NOTE.format(
+        conditions=ru.BROADCAST_AUTODELETE_JOINER.join(conditions)
+    )
+
+
+def autodelete_screen(content: Content) -> Screen:
+    rows = [
+        [Btn(format_duration(m), f"bc:autodel:{m}") for m in AUTODELETE_PRESETS[:3]],
+        [Btn(format_duration(m), f"bc:autodel:{m}") for m in AUTODELETE_PRESETS[3:]],
+        [Btn(ru.BTN_AUTODELETE_OFF, "bc:autodel:off")],
+        _leave_row("schedule"),
+    ]
+    current = format_duration(content.autodelete_after)
+    return Screen(ru.BROADCAST_ASK_AUTODELETE.format(current=current), rows=rows)
+
+
+def autodelete_reactions_screen(content: Content) -> Screen:
+    rows = [
+        [Btn(str(n), f"bc:autodelr:{n}") for n in REACTION_PRESETS],
+        [Btn(ru.BTN_AUTODELETE_OFF, "bc:autodelr:off")],
+        _leave_row("schedule"),
+    ]
+    current = str(content.autodelete_reactions or "—")
+    return Screen(ru.BROADCAST_ASK_AUTODELETE_REACTIONS.format(current=current), rows=rows)
+
+
 async def preview_screen(
     bot, session: AsyncSession, user: User, data: dict, *, has_channels: bool
 ) -> Screen:
     content = Content.from_json(data["content"])
     chat_ids = list(data.get("chats", []))
-    text = ru.BROADCAST_PREVIEW_HINT.format(
-        targets=len(chat_ids), comments=await _comments_note(bot, session, chat_ids)
-    )
+    # Everything the admin should know before choosing the time, said
+    # above the question rather than after it.
+    notes = ""
     if content.is_ad:
-        text += ru.BROADCAST_AD_NOTE.format(label=broadcast_delivery.ad_label_of(user))
+        notes += ru.BROADCAST_AD_NOTE.format(label=broadcast_delivery.ad_label_of(user))
+    notes += _autodelete_note(content)
+    text = ru.BROADCAST_PREVIEW_HINT.format(
+        targets=len(chat_ids),
+        comments=await _comments_note(bot, session, chat_ids),
+        notes=notes,
+    )
     rows = [
         [_option_button(content, "silent"), _option_button(content, "pin")],
         [_option_button(content, "protect"), _option_button(content, "is_ad")],
+        _autodelete_buttons(content),
     ]
     # A channel post gets comments from its discussion group; in a group
     # the switch would mean nothing, so it is only offered when it can act.
@@ -575,6 +673,120 @@ async def cb_toggle_option(
         has_channels=await _has_channel_target(session, list(data.get("chats", []))),
     )
     await respond(callback, screen, rich_buttons=_rich(user))
+
+
+async def _content_of(state: FSMContext) -> Content:
+    return Content.from_json((await state.get_data())["content"])
+
+
+async def _set_content_option(
+    session: AsyncSession, user: User, state: FSMContext, name: str, value: object
+) -> dict:
+    data = await state.get_data()
+    data["content"][name] = value
+    await state.set_data(data)
+    await state.set_state(BroadcastNew.schedule)
+    await _remember(session, user, "schedule", data)
+    return data
+
+
+async def _preview_again(
+    bot, session: AsyncSession, user: User, data: dict, callback: CallbackQuery | None, chat_id: int
+) -> None:
+    screen = await preview_screen(
+        bot,
+        session,
+        user,
+        data,
+        has_channels=await _has_channel_target(session, list(data.get("chats", []))),
+    )
+    if callback is not None:
+        await respond(callback, screen, rich_buttons=_rich(user))
+    else:
+        await send(bot, chat_id, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(BroadcastNew.schedule, F.data.in_({"bc:autodel", "bc:autodelr"}))
+async def cb_autodelete_open(callback: CallbackQuery, user: User | None, state: FSMContext) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    content = await _content_of(state)
+    by_time = callback.data == "bc:autodel"
+    await state.set_state(BroadcastNew.autodelete if by_time else BroadcastNew.autodelete_reactions)
+    screen = autodelete_screen(content) if by_time else autodelete_reactions_screen(content)
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(BroadcastNew.autodelete, F.data.regexp(r"^bc:autodel:(\d+|off)$"))
+async def cb_autodelete_pick(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    raw = callback.data.rsplit(":", 1)[1]
+    minutes = None if raw == "off" else int(raw)
+    data = await _set_content_option(session, user, state, "autodelete_after", minutes)
+    await callback.answer(
+        ru.BROADCAST_AUTODELETE_SET.format(when=format_duration(minutes))
+        if minutes
+        else ru.BROADCAST_AUTODELETE_CLEARED
+    )
+    await _preview_again(callback.bot, session, user, data, callback, callback.message.chat.id)
+
+
+@router.message(BroadcastNew.autodelete, F.text)
+async def on_autodelete_text(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        return
+    minutes = parse_duration(message.text)
+    if minutes is None:
+        await send(
+            message.bot,
+            message.chat.id,
+            Screen(ru.BROADCAST_BAD_DURATION),
+            rich_buttons=_rich(user),
+        )
+        return
+    data = await _set_content_option(session, user, state, "autodelete_after", minutes)
+    await _preview_again(message.bot, session, user, data, None, message.chat.id)
+
+
+@router.callback_query(BroadcastNew.autodelete_reactions, F.data.regexp(r"^bc:autodelr:(\d+|off)$"))
+async def cb_autodelete_reactions_pick(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    raw = callback.data.rsplit(":", 1)[1]
+    count = None if raw == "off" else int(raw)
+    data = await _set_content_option(session, user, state, "autodelete_reactions", count)
+    await callback.answer(
+        ru.BROADCAST_AUTODELETE_R_SET.format(count=count)
+        if count
+        else ru.BROADCAST_AUTODELETE_CLEARED
+    )
+    await _preview_again(callback.bot, session, user, data, callback, callback.message.chat.id)
+
+
+@router.message(BroadcastNew.autodelete_reactions, F.text)
+async def on_autodelete_reactions_text(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        return
+    raw = message.text.strip().replace(" ", "")
+    if not raw.isdigit() or not 0 < int(raw) <= MAX_REACTION_TRIGGER:
+        await send(
+            message.bot, message.chat.id, Screen(ru.BROADCAST_BAD_COUNT), rich_buttons=_rich(user)
+        )
+        return
+    data = await _set_content_option(session, user, state, "autodelete_reactions", int(raw))
+    await _preview_again(message.bot, session, user, data, None, message.chat.id)
 
 
 @router.callback_query(BroadcastNew.schedule, F.data == "bc:adlabel")
@@ -873,6 +1085,129 @@ async def cb_run_now(
         await session.commit()
     await send(
         callback.bot, callback.message.chat.id, _sent_screen(result), rich_buttons=_rich(user)
+    )
+
+
+# --- the published post: rewrite it, or take it down ----------------------
+
+
+class BroadcastEdit(StatesGroup):
+    text = State()
+
+
+@router.callback_query(F.data.regexp(r"^bc:(\d+):edit$"))
+async def cb_edit_post(
+    callback: CallbackQuery, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    b = await _owned(callback, session, user)
+    if b is None:
+        return
+    standing = await post_service.messages_of(session, b.id)
+    if not standing:
+        await callback.answer(ru.BROADCAST_EDIT_NOTHING, show_alert=True)
+        return
+    await state.set_state(BroadcastEdit.text)
+    await state.set_data({"broadcast_id": b.id})
+    screen = Screen(
+        ru.BROADCAST_ASK_EDIT.format(count=len(standing)),
+        rows=[[Btn(ru.BTN_BACK, f"bc:{b.id}")]],
+    )
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.message(BroadcastEdit.text)
+async def on_edit_text(
+    message: Message, session: AsyncSession, user: User | None, state: FSMContext
+) -> None:
+    if user is None:
+        return
+    b = await broadcast_service.get_owned_broadcast(
+        session, user, (await state.get_data())["broadcast_id"]
+    )
+    if b is None:
+        await state.clear()
+        return
+    fresh = content_from_message(message)
+    if fresh is None or fresh.text is None:
+        await send(
+            message.bot,
+            message.chat.id,
+            Screen(ru.BROADCAST_EDIT_UNSUPPORTED),
+            rich_buttons=_rich(user),
+        )
+        return
+    # Only the words change: the media file, the buttons and the delivery
+    # options of the original post stay as they were.
+    content = replace(
+        Content.from_json(b.content),
+        text=fresh.text,
+        entities=fresh.entities,
+        parse_mode=fresh.parse_mode,
+    )
+    published = broadcast_delivery.with_ad_label(content, broadcast_delivery.ad_label_of(user))
+    result = await post_service.edit_all(message.bot, session, b, published)
+    # Stored without the ad label, exactly as it was composed, so the next
+    # run of a recurring broadcast appends it once and not twice.
+    b.content = content.to_json()
+    await session.commit()
+    await state.clear()
+    await send(
+        message.bot,
+        message.chat.id,
+        Screen(
+            ru.BROADCAST_EDITED.format(done=result.done, failed=result.failed),
+            rows=[[Btn(ru.BTN_BACK, f"bc:{b.id}")]],
+        ),
+        rich_buttons=_rich(user),
+    )
+
+
+@router.callback_query(F.data.regexp(r"^bc:(\d+):delposts$"))
+async def cb_delete_posts_confirm(
+    callback: CallbackQuery, session: AsyncSession, user: User | None
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    b = await _owned(callback, session, user)
+    if b is None:
+        return
+    standing = await post_service.messages_of(session, b.id)
+    if not standing:
+        await callback.answer(ru.BROADCAST_EDIT_NOTHING, show_alert=True)
+        return
+    screen = Screen(
+        ru.BROADCAST_CONFIRM_DELETE_POSTS.format(count=len(standing)),
+        rows=[
+            [Btn(ru.BTN_POST_DELETE_YES, f"bc:{b.id}:delposts:yes", STYLE_DANGER)],
+            [Btn(ru.BTN_BACK, f"bc:{b.id}")],
+        ],
+    )
+    await respond(callback, screen, rich_buttons=_rich(user))
+
+
+@router.callback_query(F.data.regexp(r"^bc:(\d+):delposts:yes$"))
+async def cb_delete_posts(
+    callback: CallbackQuery, session: AsyncSession, user: User | None
+) -> None:
+    if user is None:
+        await callback.answer()
+        return
+    b = await _owned(callback, session, user)
+    if b is None:
+        return
+    result = await post_service.delete_all(callback.bot, session, b)
+    await callback.answer()
+    await respond(
+        callback,
+        Screen(
+            ru.BROADCAST_POSTS_DELETED.format(done=result.done, failed=result.failed),
+            rows=[[Btn(ru.BTN_BACK, f"bc:{b.id}")]],
+        ),
+        rich_buttons=_rich(user),
     )
 
 

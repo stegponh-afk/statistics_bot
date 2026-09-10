@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache import Cache
 from app.database.models import Broadcast, Chat, User
-from app.services import broadcast_service, channel_stats, comment_control
+from app.services import broadcast_service, channel_stats, comment_control, post_service
 from app.services.broadcast_service import Content
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,9 @@ async def _after_publish(
         await channel_stats.record_ad_post(
             session, chat, message.message_id, broadcast_id=broadcast_id
         )
+    # Last, and never skipped: the registry is what lets the post be
+    # edited, deleted or auto-deleted later.
+    await post_service.record(session, chat, message.message_id, content, broadcast_id=broadcast_id)
 
 
 async def publish(

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cache import Cache
 from app.database.models import Chat, User
 from app.filters.chat_type import CHANNEL
-from app.services import channel_stats, chat_service, join_request_service
+from app.services import channel_stats, chat_service, join_request_service, post_service
 from app.services.subscription_checker import member_cache_key
 from config import settings
 
@@ -89,6 +89,9 @@ async def on_subscriber_changed(
 @router.message_reaction_count()
 async def on_reaction_count(event: MessageReactionCountUpdated, session: AsyncSession) -> None:
     await channel_stats.record_reactions(session, event)
+    # A post can be set to delete itself once it has collected enough
+    # reactions; this update is the only moment we learn that it has.
+    await post_service.on_reactions(event.bot, session, event.chat.id, event.message_id)
 
 
 @router.channel_post()

@@ -21,7 +21,7 @@ from app.database.models import (
     User,
 )
 from app.services.markdown import has_markup, markdown_to_html
-from app.utils import ensure_aware, get_zone
+from app.utils import ensure_aware, get_zone, pluralize
 
 MEDIA_TYPES = ("photo", "video", "document", "animation", "audio", "voice")
 WEEKDAY_LABELS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
@@ -54,6 +54,11 @@ class Content:
     # post — there is no per-post flag for it.
     comments: bool = True
     is_ad: bool = False  # gets the admin's ad label and is counted apart
+    # Auto-delete triggers, whichever comes first. Minutes since publishing,
+    # and a number of reactions on the post (post views are not available
+    # to bots at all — see README).
+    autodelete_after: int | None = None
+    autodelete_reactions: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -188,6 +193,70 @@ def next_recurring_run(
         if candidate > now_local:
             return candidate.astimezone(UTC)
     return None
+
+
+_DURATION_RE = re.compile(r"(\d+)\s*([a-zA-Zа-яА-Я.]*)\s*")
+# What one unit is worth in minutes. Everything an admin might type,
+# including the bare number (then it is minutes).
+_UNITS = {
+    "": 1,
+    "м": 1,
+    "мин": 1,
+    "минут": 1,
+    "минуты": 1,
+    "минута": 1,
+    "m": 1,
+    "min": 1,
+    "ч": 60,
+    "час": 60,
+    "часа": 60,
+    "часов": 60,
+    "h": 60,
+    "hour": 60,
+    "д": 1440,
+    "дн": 1440,
+    "день": 1440,
+    "дня": 1440,
+    "дней": 1440,
+    "d": 1440,
+    "day": 1440,
+    "н": 10080,
+    "нед": 10080,
+    "неделя": 10080,
+    "недели": 10080,
+    "w": 10080,
+    "week": 10080,
+}
+MAX_AUTODELETE_MINUTES = 365 * 24 * 60
+
+
+def parse_duration(text: str) -> int | None:
+    """«30м», «2ч 30м», «3 дня», «90» -> minutes. None if it makes no
+    sense — the whole string has to be numbers and known units, so «-5»
+    and «100 лет» are refused instead of quietly becoming something."""
+    text = text.lower().strip()
+    total, pos = 0, 0
+    while pos < len(text):
+        match = _DURATION_RE.match(text, pos)
+        if match is None:
+            return None
+        factor = _UNITS.get(match.group(2).rstrip("."))
+        if factor is None:
+            return None
+        total += int(match.group(1)) * factor
+        pos = match.end()
+    if not 0 < total <= MAX_AUTODELETE_MINUTES:
+        return None
+    return total
+
+
+def format_duration(minutes: int | None) -> str:
+    if not minutes:
+        return "—"
+    for size, forms in ((1440, ("день", "дня", "дней")), (60, ("час", "часа", "часов"))):
+        if minutes % size == 0:
+            return f"{minutes // size} {pluralize(minutes // size, *forms)}"
+    return f"{minutes} {pluralize(minutes, 'минута', 'минуты', 'минут')}"
 
 
 def format_days(days: list[int]) -> str:
