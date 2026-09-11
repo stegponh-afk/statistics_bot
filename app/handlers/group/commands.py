@@ -24,7 +24,11 @@ def _rich(user: User | None) -> bool:
 @router.message(Command("help"))
 async def cmd_help(message: Message, user: User | None) -> None:
     await reply_to_command(
-        message, Screen(ru.HELP_GROUP), rich_buttons=_rich(user), delete_public=True
+        message,
+        Screen(ru.HELP_GROUP),
+        rich_buttons=_rich(user),
+        delete_public=True,
+        public_fallback=True,
     )
 
 
@@ -60,7 +64,9 @@ async def cmd_me(
     if chat_row is None:
         return
     if message.from_user is None or message.sender_chat is not None:
-        await reply_to_command(message, Screen(ru.ME_NO_USER), rich_buttons=_rich(user))
+        await reply_to_command(
+            message, Screen(ru.ME_NO_USER), rich_buttons=_rich(user), public_fallback=True
+        )
         return
     screen = await me_screen(session, chat_row, message.from_user.id)
     await reply_to_command(message, screen, rich_buttons=_rich(user), delete_public=True)
@@ -89,9 +95,13 @@ async def cmd_whitelist(
     target = replied.from_user
     await forcesub_service.add_to_whitelist(session, cache, chat_row, target.id, user)
     name = display_name(target.full_name, target.username, target.id)
+    # An anonymous admin gets this one in the chat: a confirmation that
+    # somebody may now write without subscribing is not a secret, and the
+    # command itself was typed in the open.
     await reply_to_command(
         message,
         Screen(ru.WHITELIST_CMD_ADDED.format(name=name)),
         rich_buttons=_rich(user),
         delete_public=True,
+        public_fallback=True,
     )

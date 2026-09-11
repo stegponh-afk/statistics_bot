@@ -32,6 +32,7 @@ from aiogram.types import (
     ReplyParameters,
 )
 
+from app.texts import ru
 from app.ui.blocks import rich_blocks_from_legacy_text
 from app.ui.buttons import ButtonRow, apply_button_style, keyboard_from_rows
 
@@ -120,7 +121,12 @@ async def send_ephemeral(
             message_thread_id=thread_id,
         )
     except TelegramBadRequest as e:
-        logger.warning("rich ephemeral send rejected, falling back to text: %s", e)
+        logger.warning(
+            "rich ephemeral send to %s in %s rejected, falling back to text: %s",
+            receiver_user_id,
+            chat_id,
+            e,
+        )
     except TelegramForbiddenError as e:
         logger.info("ephemeral send forbidden: %s", e)
         return None
@@ -136,7 +142,7 @@ async def send_ephemeral(
             message_thread_id=thread_id,
         )
     except (TelegramBadRequest, TelegramForbiddenError) as e:
-        logger.warning("ephemeral text send failed: %s", e)
+        logger.warning("ephemeral text send to %s in %s failed: %s", receiver_user_id, chat_id, e)
         return None
 
 
@@ -255,26 +261,57 @@ async def respond(callback: CallbackQuery, screen: Screen, *, rich_buttons: bool
         await callback.answer()
 
 
+def personal_receiver(message: Message) -> int | None:
+    """Who a private answer can be addressed to — None when nobody can be.
+
+    An anonymous admin writes as the chat itself: the message carries
+    `sender_chat`, and `from_user` is Telegram's GroupAnonymousBot. A bot
+    is not a valid receiver, so an ephemeral send to it comes back as
+    RECEIVER_ID_INVALID, and the admin sees no answer at all."""
+    if message.sender_chat is not None:
+        return None
+    if message.from_user is None or message.from_user.is_bot:
+        return None
+    return message.from_user.id
+
+
 async def reply_to_command(
-    message: Message, screen: Screen, *, rich_buttons: bool, delete_public: bool = False
+    message: Message,
+    screen: Screen,
+    *,
+    rich_buttons: bool,
+    delete_public: bool = False,
+    public_fallback: bool = False,
 ) -> Message | None:
     """Answers a /command: a normal message in private, ephemeral in groups.
     With delete_public, a command the user typed publicly (as opposed to
     picking it from the bot menu, which is invisible anyway) is removed
-    afterwards so the chat doesn't fill up with /stats lines."""
+    afterwards so the chat doesn't fill up with /stats lines.
+
+    When there is nobody to answer privately (an anonymous admin), the
+    answer goes into the chat if it is not private anyway
+    (`public_fallback`); otherwise the admin is told why there is none."""
     if message.chat.type == ChatType.PRIVATE:
         return await send(message.bot, message.chat.id, screen, rich_buttons=rich_buttons)
 
-    if message.from_user is None:
-        return None
+    thread_id = message.message_thread_id if message.is_topic_message else None
+    receiver = personal_receiver(message)
+    if receiver is None:
+        return await send(
+            message.bot,
+            message.chat.id,
+            screen if public_fallback else Screen(ru.COMMAND_ANONYMOUS),
+            rich_buttons=rich_buttons,
+            thread_id=thread_id,
+        )
     sent = await send_ephemeral(
         message.bot,
         message.chat.id,
-        message.from_user.id,
+        receiver,
         screen,
         rich_buttons=rich_buttons,
         reply_to=message,
-        thread_id=message.message_thread_id if message.is_topic_message else None,
+        thread_id=thread_id,
     )
     if delete_public and not message.ephemeral_message_id:
         try:

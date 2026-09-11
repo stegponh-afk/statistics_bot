@@ -1,7 +1,17 @@
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
 
-from app.ui import Btn, Screen, edit_ephemeral, reply_to_command, respond, send, send_ephemeral
+from app.texts import ru
+from app.ui import (
+    Btn,
+    Screen,
+    edit_ephemeral,
+    reply_to_command,
+    respond,
+    send,
+    send_ephemeral,
+)
+from app.ui.screen import personal_receiver
 from tests.fakes import FakeBot, make_callback, make_message
 
 
@@ -114,3 +124,44 @@ async def test_reply_to_command_in_private_is_a_normal_message(bot: FakeBot):
     await reply_to_command(message, _screen(), rich_buttons=True)
     (call,) = bot.calls_named("send_rich_message")
     assert call.get("ephemeral_message_parameters") is None
+
+
+# An anonymous admin writes as the chat itself: `from_user` is Telegram's
+# GroupAnonymousBot, and an ephemeral message addressed to a bot comes
+# back as RECEIVER_ID_INVALID — the admin used to see no answer at all.
+ANONYMOUS_ADMIN_BOT_ID = 1087968824
+GROUP = -100_55
+
+
+def _anonymous(bot: FakeBot):
+    return make_message(
+        chat_id=GROUP,
+        user_id=ANONYMOUS_ADMIN_BOT_ID,
+        from_bot=True,
+        sender_chat_id=GROUP,
+        text="/whitelist",
+        bot=bot,
+    )
+
+
+def test_an_anonymous_sender_has_nobody_to_answer_privately(bot: FakeBot):
+    assert personal_receiver(_anonymous(bot)) is None
+    assert personal_receiver(make_message(chat_id=GROUP, user_id=42, bot=bot)) == 42
+
+
+async def test_an_anonymous_admin_is_told_why_there_is_no_private_answer(bot: FakeBot):
+    await reply_to_command(_anonymous(bot), _screen(), rich_buttons=True, delete_public=True)
+    (call,) = bot.calls_named("send_rich_message")
+    # Not even attempted ephemerally: there is no valid receiver to try.
+    assert "ephemeral_message_parameters" not in call
+    assert call["chat_id"] == GROUP
+    assert "Отключите анонимность" in str(call["rich_message"])
+    assert "Вы пишете анонимно" in ru.COMMAND_ANONYMOUS
+
+
+async def test_an_answer_that_is_public_anyway_just_goes_into_the_chat(bot: FakeBot):
+    await reply_to_command(
+        _anonymous(bot), _screen(), rich_buttons=True, public_fallback=True, delete_public=True
+    )
+    (call,) = bot.calls_named("send_rich_message")
+    assert "Тест" in str(call["rich_message"])
